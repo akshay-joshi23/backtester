@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+.claude/
+
+# Cached intermediate data (regeneratable from yfinance).
+regime_model/cache/
+
+# Outputs are checked in so REPORT.md references work standalone.
+# (Re-run notebooks/0*.py to regenerate.)
+
+.DS_Store
+*.swp

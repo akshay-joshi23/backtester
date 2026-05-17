@@ -403,6 +403,27 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_chat_command_handler_handles_help_and_unknown():
+    """Smoke test the :help and unknown-command paths without hitting the LLM."""
+    from lab.chat import SessionState, _do_command
+
+    state = SessionState()
+    # :help should return True (keep going) and not raise.
+    assert _do_command(state, ":help") is True
+    # Unknown command should also return True.
+    assert _do_command(state, ":nope") is True
+    # :exit should return False.
+    assert _do_command(state, ":exit") is False
+
+
+def test_chat_reset_clears_parent():
+    from lab.chat import SessionState, _do_command
+
+    state = SessionState(parent_run_id="some-prior-run")
+    _do_command(state, ":reset")
+    assert state.parent_run_id is None
+
+
 def test_refine_strategy_signature_exists():
     """Smoke test that refine_strategy is importable and has the documented signature."""
     from inspect import signature

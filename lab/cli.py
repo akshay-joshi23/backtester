@@ -127,6 +127,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_chat(args: argparse.Namespace) -> int:
+    from lab.chat import run_chat
+    return run_chat()
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     print(format_run_tree())
     return 0
@@ -382,6 +387,9 @@ def main() -> int:
     p_cmp.add_argument("--open", action="store_true",
                        help="open the plot in the default browser")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_chat = sub.add_parser("chat", help="interactive REPL: each turn generates+runs a strategy")
+    p_chat.set_defaults(func=lambda args: _cmd_chat(args))
 
     p_tree = sub.add_parser("tree", help="show the strategy-family tree across runs")
     p_tree.set_defaults(func=cmd_tree)

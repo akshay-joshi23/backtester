@@ -403,6 +403,79 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_borrow_cost_zero_for_long_only():
+    from lab.costs import BorrowCost
+    cm = BorrowCost()
+    weights = np.array([0.4, 0.6, 0.0])
+    tickers = ["SPY", "TLT", "GLD"]
+    assert cm.holding_cost(weights, tickers) == 0.0
+
+
+def test_borrow_cost_charges_shorts_daily():
+    from lab.costs import BorrowCost
+    cm = BorrowCost(rates_bps={"SPY": 50.0}, fallback_bps=300.0)
+    weights = np.array([-0.5, 0.0])
+    tickers = ["SPY", "TLT"]
+    daily = cm.holding_cost(weights, tickers, dt_years=1.0 / 252.0)
+    # 0.5 short * 50/1e4 / 252 = 9.92e-6
+    expected = 0.5 * 0.0050 / 252.0
+    assert abs(daily - expected) < 1e-12
+
+
+def test_borrow_cost_uses_fallback_for_unknown_ticker():
+    from lab.costs import BorrowCost
+    cm = BorrowCost(rates_bps={"SPY": 50.0}, fallback_bps=500.0)
+    weights = np.array([-1.0])
+    annual = cm.holding_cost(weights, ["WEIRDCOIN"], dt_years=1.0)
+    assert abs(annual - 0.05) < 1e-12
+
+
+def test_composite_cost_model_sums():
+    from lab.costs import (
+        BorrowCost, CompositeCostModel, FlatBpsPerLeg,
+    )
+    cm = CompositeCostModel(models=(
+        FlatBpsPerLeg(bps=5.0),
+        BorrowCost(rates_bps={"SPY": 100.0}, fallback_bps=100.0),
+    ))
+    # Trade cost: |0.5 - 0.0| + |0.0 - 0.5| = 1.0 → 5/1e4
+    prev = np.array([0.0, 0.0])
+    target = np.array([0.5, -0.5])
+    tickers = ["SPY", "TLT"]
+    trade = cm.trade_cost(prev, target, tickers)
+    assert abs(trade - 1.0 * 5 / 1e4) < 1e-12
+    # Holding: 0.5 short * 100/1e4 / 252 daily
+    hold = cm.holding_cost(target, tickers, dt_years=1.0 / 252.0)
+    assert abs(hold - 0.5 * 0.01 / 252.0) < 1e-12
+
+
+def test_backtest_charges_holding_cost_on_shorts():
+    """A persistent short should pay borrow each day → NAV decays slowly."""
+    from lab.costs import BorrowCost
+    from lab.strategy import Strategy
+
+    class ShortSPY(Strategy):
+        name = "ShortSPY"
+        def rebalance(self, date, history):
+            return pd.Series({"SPY": -0.5, "TLT": 0.0})
+
+    idx = pd.bdate_range("2010-01-04", periods=200)
+    # Flat zero returns so any NAV decay must be from costs.
+    rets = pd.DataFrame(np.zeros((200, 2)), index=idx, columns=["SPY", "TLT"])
+    cfg = BacktestConfig(
+        train_end=idx[20].strftime("%Y-%m-%d"),
+        rebalance_freq=10_000,  # one rebalance only
+        long_only=False,
+        max_leverage=1.0,
+    )
+    cm = BorrowCost(rates_bps={"SPY": 1000.0}, fallback_bps=1000.0)
+    res = walk_forward_backtest(ShortSPY(), rets, cfg=cfg, cost_model=cm)
+    # 180 OOS days * 0.5 short * 0.10 / 252 ≈ 0.0357 NAV decay
+    expected_decay = 1.0 - (1.0 - 0.5 * 0.10 / 252.0) ** 180
+    actual_decay = 1.0 - float(res.equity.iloc[-1])
+    assert abs(actual_decay - expected_decay) < 1e-3
+
+
 def test_resample_to_weekly_aggregates_returns():
     from lab.data import UniverseBundle, resample_to_frequency
 

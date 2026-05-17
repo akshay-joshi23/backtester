@@ -125,7 +125,7 @@ def walk_forward_backtest(
         if days_since_rebalance == 0:
             raw = strategy.rebalance(t, history)
             w_target = _coerce_weights(raw, tickers, cfg)
-            cost = cost_model.apply(weights_prev, w_target)
+            cost = cost_model.trade_cost(weights_prev, w_target, tickers)
             tc_series.loc[t] = nav * cost
             turnover.loc[t] = float(np.abs(w_target - weights_prev).sum())
             nav_after_trade = nav * (1.0 - cost)
@@ -135,6 +135,12 @@ def walk_forward_backtest(
             weights_after_trade = weights_prev
             nav_after_trade = nav
         target_w.loc[t] = weights_after_trade
+
+        # Holding cost (e.g. borrow on shorts) charged every period.
+        holding = cost_model.holding_cost(weights_after_trade, tickers)
+        if holding > 0:
+            nav_after_trade = nav_after_trade * (1.0 - holding)
+            tc_series.loc[t] = tc_series.loc[t] + nav * holding
 
         # Apply day-t returns.
         r_log = returns.loc[t].values

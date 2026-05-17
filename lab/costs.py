@@ -1,30 +1,57 @@
-"""Transaction-cost models for Strategy Lab.
+"""Transaction- and holding-cost models for Strategy Lab.
 
-A cost model converts a trade (delta in weights) into a NAV haircut. v1 ships
-with `FlatBpsPerLeg` — a configurable basis-points charge on the absolute
-change in each leg, which is realistic for liquid ETFs.
+A cost model returns NAV haircuts for:
+  - `trade_cost(prev, target)` — charged on rebalance, proportional to |Δw|
+  - `holding_cost(weights, dt)` — charged every period, e.g. for shorts
 
-Adding a new model: subclass `CostModel` and implement `apply`.
+Both default to 0. Subclasses can implement one or both. `CompositeCostModel`
+chains several models so you can stack a per-leg trade cost + slippage +
+borrow cost.
+
+The `apply()` method is preserved for backward compatibility — it now calls
+`trade_cost`, so any existing CostModel subclass keeps working.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from abc import ABC
+from dataclasses import dataclass, field
 
 import numpy as np
 
 
 class CostModel(ABC):
-    """Abstract transaction-cost model."""
+    """Abstract cost model. Override `trade_cost` and/or `holding_cost`."""
 
-    @abstractmethod
-    def apply(self, weights_prev: np.ndarray, weights_target: np.ndarray) -> float:
-        """Return the proportional cost (fraction of NAV) of going from
-        `weights_prev` to `weights_target`. Should be in [0, 1].
+    def trade_cost(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+        tickers: list[str] | None = None,
+    ) -> float:
+        """Proportional cost of trading from prev to target weights."""
+        return 0.0
 
-        Both inputs are 1-D numpy arrays aligned to the same universe.
+    def holding_cost(
+        self,
+        weights: np.ndarray,
+        tickers: list[str] | None = None,
+        dt_years: float = 1.0 / 252.0,
+    ) -> float:
+        """Proportional cost of holding the given weights for one period.
+
+        `dt_years` defaults to one trading day (1/252). Multiply your
+        annualized rates by `dt_years` to get the per-period charge.
         """
+        return 0.0
+
+    def apply(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+    ) -> float:
+        """Backward-compat shim — returns trade_cost only."""
+        return self.trade_cost(weights_prev, weights_target)
 
 
 @dataclass(frozen=True)
@@ -38,7 +65,12 @@ class FlatBpsPerLeg(CostModel):
 
     bps: float = 5.0
 
-    def apply(self, weights_prev: np.ndarray, weights_target: np.ndarray) -> float:
+    def trade_cost(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+        tickers: list[str] | None = None,
+    ) -> float:
         trade = float(np.abs(weights_target - weights_prev).sum())
         return trade * (self.bps / 1e4)
 
@@ -47,5 +79,76 @@ class FlatBpsPerLeg(CostModel):
 class ZeroCost(CostModel):
     """Pretend trading is free — useful for sanity tests."""
 
-    def apply(self, weights_prev: np.ndarray, weights_target: np.ndarray) -> float:
-        return 0.0
+
+# --------------------------------------------------------------------------- #
+# E-14 v2: borrow-cost model for shorts
+# --------------------------------------------------------------------------- #
+
+#: Conservative defaults for major US ETFs (annualized borrow %). Real IBKR
+#: borrow rates for SPY/QQQ/IWM are typically <0.5%; here we use 0.5% to
+#: avoid making strategies look better than they are.
+DEFAULT_BORROW_RATES_BPS: dict[str, float] = {
+    "SPY": 50, "QQQ": 50, "IWM": 50, "DIA": 50, "VOO": 50, "VTI": 50,
+    "TLT": 75, "IEF": 75, "SHY": 50,
+    "GLD": 75, "SLV": 100,
+    "HYG": 150, "LQD": 100,
+    "UUP": 100, "FXE": 100, "FXY": 100,
+    "EFA": 75, "EEM": 100, "VWO": 100,
+    "VNQ": 100,
+    "XLE": 100, "XLF": 100, "XLK": 75, "XLY": 100, "XLP": 100, "XLV": 100,
+    "XLI": 100, "XLB": 100, "XLU": 100, "XLRE": 100,
+}
+#: Annualized borrow rate (bps) applied to any ticker not in the table.
+DEFAULT_BORROW_FALLBACK_BPS: float = 300.0
+
+
+@dataclass(frozen=True)
+class BorrowCost(CostModel):
+    """Annualized borrow cost on the short side, charged daily.
+
+    Conservative approximation — real borrow rates vary by name, by lender,
+    and by date. The defaults are tuned for major US ETFs and lean
+    pessimistic. For single-name shorts, override `rates` with the actual
+    IBKR/your-broker schedule.
+    """
+
+    rates_bps: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_BORROW_RATES_BPS))
+    fallback_bps: float = DEFAULT_BORROW_FALLBACK_BPS
+
+    def holding_cost(
+        self,
+        weights: np.ndarray,
+        tickers: list[str] | None = None,
+        dt_years: float = 1.0 / 252.0,
+    ) -> float:
+        if tickers is None or len(tickers) != len(weights):
+            return 0.0
+        cost = 0.0
+        for w, t in zip(weights, tickers):
+            if w < -1e-12:  # only shorts pay borrow
+                rate = self.rates_bps.get(t.upper(), self.fallback_bps) / 1e4
+                cost += abs(float(w)) * rate * dt_years
+        return cost
+
+
+@dataclass(frozen=True)
+class CompositeCostModel(CostModel):
+    """Sum of multiple cost models. trade_cost and holding_cost stack additively."""
+
+    models: tuple[CostModel, ...] = ()
+
+    def trade_cost(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+        tickers: list[str] | None = None,
+    ) -> float:
+        return sum(m.trade_cost(weights_prev, weights_target, tickers) for m in self.models)
+
+    def holding_cost(
+        self,
+        weights: np.ndarray,
+        tickers: list[str] | None = None,
+        dt_years: float = 1.0 / 252.0,
+    ) -> float:
+        return sum(m.holding_cost(weights, tickers, dt_years) for m in self.models)

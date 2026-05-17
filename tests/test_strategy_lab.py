@@ -403,6 +403,54 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_spa_test_high_p_value_when_no_alt_beats_benchmark():
+    """All alts are pure noise → SPA should produce high p-value (no superiority)."""
+    from lab.spa import spa_test
+
+    rng = np.random.default_rng(0)
+    n = 300
+    idx = pd.bdate_range("2010-01-04", periods=n)
+    bm = pd.Series(rng.normal(0.0005, 0.01, n), index=idx)
+    alts = {
+        f"alt{i}": pd.Series(rng.normal(0.0005, 0.01, n), index=idx)
+        for i in range(5)
+    }
+    result = spa_test(bm, alts, n_resamples=500, seed=0)
+    # 5 same-distribution alts → roughly half should have negative excess by chance.
+    # T_SPA may be moderate; p-value should NOT be tiny.
+    assert result.p_value > 0.05, f"expected p>0.05 under null, got {result.p_value}"
+
+
+def test_spa_test_low_p_value_when_one_alt_clearly_beats():
+    """One alt has much higher drift than the benchmark — SPA should detect."""
+    from lab.spa import spa_test
+
+    rng = np.random.default_rng(0)
+    n = 1000  # longer series for cleaner signal
+    idx = pd.bdate_range("2010-01-04", periods=n)
+    bm = pd.Series(rng.normal(0.0001, 0.01, n), index=idx)
+    # Strong winner: drift 0.003 vs bm's 0.0001 = ~7-sigma excess in a year.
+    winner = pd.Series(rng.normal(0.0030, 0.01, n), index=idx)
+    losers = {
+        f"alt{i}": pd.Series(rng.normal(0.0000, 0.01, n), index=idx)
+        for i in range(4)
+    }
+    alts = {"winner": winner, **losers}
+    result = spa_test(bm, alts, n_resamples=500, seed=0)
+    assert result.p_value < 0.05, f"expected p<0.05, got {result.p_value}"
+    # "winner" should have the highest t-score.
+    assert result.per_alt["t_score"].idxmax() == "winner"
+
+
+def test_stationary_bootstrap_indices_have_right_length():
+    from lab.spa import stationary_block_bootstrap_indices
+
+    rng = np.random.default_rng(0)
+    idx = stationary_block_bootstrap_indices(500, block_length=20, rng=rng)
+    assert len(idx) == 500
+    assert idx.min() >= 0 and idx.max() < 500
+
+
 def test_walk_forward_sweep_builds_schedule_and_picks_winner(tmp_path):
     from lab.data import UniverseBundle
     from lab.sweep import walk_forward_sweep, _build_walk_forward_schedule

@@ -220,6 +220,50 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_spa(args: argparse.Namespace) -> int:
+    """Run Hansen's SPA on a benchmark vs N alternatives (each by run_id)."""
+    from lab.spa import spa_test
+    bm = load_run(args.benchmark)
+    alts = {rid: load_run(rid) for rid in args.alternatives}
+    bm_rets = bm["equity"].pct_change().dropna()
+    alt_rets = {
+        f"{rid} ({a['config'].get('strategy_name','?')})":
+            a["equity"].pct_change().dropna()
+        for rid, a in alts.items()
+    }
+    result = spa_test(
+        bm_rets, alt_rets,
+        n_resamples=args.n_resamples,
+        block_length=args.block_length,
+        seed=args.seed,
+    )
+    print(f"## SPA test: benchmark = {args.benchmark} "
+          f"({bm['config'].get('strategy_name', '?')})\n")
+    print(f"  T_SPA = {result.t_stat:.3f}")
+    print(f"  p-value = {result.p_value:.4f}  "
+          f"(prob no alt is genuinely better, after multiple-testing adjustment)")
+    print(f"  block_length = {result.block_length}, "
+          f"n_resamples = {result.n_resamples}\n")
+    print("### Per-alternative diagnostics\n")
+    display = result.per_alt.copy()
+    display["mean_excess_per_period"] = display["mean_excess_per_period"].map(
+        lambda v: f"{v*100:.4f}%"
+    )
+    display["hac_std"] = display["hac_std"].map(lambda v: f"{v:.5f}")
+    display["t_score"] = display["t_score"].map(lambda v: f"{v:.3f}")
+    print(tabulate(display, headers="keys", tablefmt="simple"))
+    print(f"\n### Interpretation")
+    if result.p_value < 0.05:
+        print("  p < 0.05 → strong evidence at least one alternative genuinely "
+              "beats the benchmark, not just by chance.")
+    elif result.p_value < 0.10:
+        print("  p < 0.10 → weak/marginal evidence; results sensitive to specs.")
+    else:
+        print("  p ≥ 0.10 → no statistically significant alternative; what looks "
+              "best may be just lucky on this sample.")
+    return 0
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     print(format_run_tree())
     return 0
@@ -499,6 +543,15 @@ def main() -> int:
 
     p_chat = sub.add_parser("chat", help="interactive REPL: each turn generates+runs a strategy")
     p_chat.set_defaults(func=lambda args: _cmd_chat(args))
+
+    p_spa = sub.add_parser("spa", help="Hansen SPA test: benchmark vs alternatives")
+    p_spa.add_argument("benchmark", help="run_id of the benchmark strategy")
+    p_spa.add_argument("alternatives", nargs="+", help="run_ids of alternative strategies")
+    p_spa.add_argument("--n-resamples", type=int, default=2000)
+    p_spa.add_argument("--block-length", type=int, default=None,
+                       help="stationary bootstrap mean block length; default = T^(1/3)")
+    p_spa.add_argument("--seed", type=int, default=0)
+    p_spa.set_defaults(func=cmd_spa)
 
     p_tree = sub.add_parser("tree", help="show the strategy-family tree across runs")
     p_tree.set_defaults(func=cmd_tree)

@@ -403,6 +403,37 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_timeout_aborts_long_op():
+    """SIGALRM-based timeout should raise after the deadline."""
+    import time
+
+    from lab.timeout import TimeoutError as LabTimeout
+    from lab.timeout import timeout
+
+    start = time.time()
+    with pytest.raises(LabTimeout):
+        with timeout(seconds=0.1):
+            time.sleep(2.0)
+    elapsed = time.time() - start
+    assert elapsed < 1.0, f"timeout took too long to fire: {elapsed}s"
+
+
+def test_timeout_passes_through_when_under_budget():
+    from lab.timeout import timeout
+
+    with timeout(seconds=2.0):
+        x = sum(range(1000))
+    assert x == 999 * 1000 // 2
+
+
+def test_timeout_zero_disables():
+    """seconds=0 should be a no-op (no signal handler installed, no exception)."""
+    from lab.timeout import timeout
+
+    with timeout(seconds=0):
+        pass
+
+
 def test_validate_generated_code_catches_undefined_name():
     """Ruff should catch references to undefined symbols."""
     from lab.llm import _validate_generated_code

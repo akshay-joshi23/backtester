@@ -64,6 +64,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         start=args.start,
         end=args.end,
         cost_bps=args.cost_bps,
+        timeout_seconds=args.timeout,
     )
     artifacts = save_run(
         prompt=prompt,
@@ -232,6 +233,8 @@ def main() -> int:
     p_bt.add_argument("--start", default="2010-01-01", help="data fetch start")
     p_bt.add_argument("--end", default=None, help="data fetch end (exclusive)")
     p_bt.add_argument("--cost-bps", type=float, default=5.0)
+    p_bt.add_argument("--timeout", type=float, default=120.0,
+                      help="seconds; aborts runaway backtests. 0 to disable.")
     p_bt.add_argument("--model", default="claude-opus-4-7")
     p_bt.add_argument("--temperature", type=float, default=0.2)
     p_bt.add_argument("--max-tokens", type=int, default=4096)

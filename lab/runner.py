@@ -38,6 +38,7 @@ from lab.data import UniverseBundle, load_universe
 from lab.llm import GenerationResult
 from lab.metrics import annual_turnover, compute_metrics
 from lab.strategy import Strategy
+from lab.timeout import timeout as deadline_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +101,12 @@ def run_backtest(
     cost_bps: float = 5.0,
     initial_wealth: float = 1.0,
     bundle: UniverseBundle | None = None,
+    timeout_seconds: float = 120.0,
 ) -> tuple[pd.Series, pd.DataFrame, dict, BacktestConfig, str]:
     """Execute strategy code and run the backtest. Returns the core artifacts.
+
+    `timeout_seconds` aborts the run if the backtest loop runs longer than
+    the given deadline. Set to 0 or negative to disable.
 
     Returns
     -------
@@ -123,9 +128,10 @@ def run_backtest(
         rebalance_freq=rebalance_freq,
         initial_wealth=initial_wealth,
     )
-    result = walk_forward_backtest(
-        strategy, returns, cfg=cfg, cost_model=FlatBpsPerLeg(bps=cost_bps),
-    )
+    with deadline_timeout(timeout_seconds):
+        result = walk_forward_backtest(
+            strategy, returns, cfg=cfg, cost_model=FlatBpsPerLeg(bps=cost_bps),
+        )
     metrics = compute_metrics(result.equity)
     metrics["annual_turnover"] = annual_turnover(result.turnover)
     metrics["total_transaction_cost"] = float(result.transaction_costs.sum())

@@ -111,6 +111,124 @@ class Top2Momentum(Strategy):
         return w
 ```
 
+### Example 4: vol-targeted equal-weight
+
+User: "Equal-weight a basket, but scale total exposure so the *portfolio* vol targets 10% annualized."
+
+```python
+from lab.strategy import Strategy
+import numpy as np
+import pandas as pd
+
+class VolTargetedEW(Strategy):
+    name = "Vol-targeted equal-weight"
+
+    def __init__(self, target_ann_vol: float = 0.10, vol_lookback: int = 60,
+                 max_leverage: float = 1.0):
+        self.target_ann_vol = target_ann_vol
+        self.vol_lookback = vol_lookback
+        self.max_leverage = max_leverage
+
+    def rebalance(self, date: pd.Timestamp, history: pd.DataFrame) -> pd.Series:
+        if len(history) < self.vol_lookback:
+            return pd.Series(0.0, index=history.columns)
+        n = len(history.columns)
+        raw_w = pd.Series(1.0 / n, index=history.columns)
+        window = history.iloc[-self.vol_lookback:]
+        cov = window.cov().to_numpy()  # daily log-return covariance
+        port_var = float(raw_w.values @ cov @ raw_w.values)
+        if port_var <= 0:
+            return raw_w
+        port_ann_vol = np.sqrt(port_var * 252.0)
+        scale = self.target_ann_vol / port_ann_vol
+        scale = min(scale, self.max_leverage / float(raw_w.sum()))
+        return raw_w * scale
+```
+
+### Example 5: inverse-volatility weighting
+
+User: "Weight each asset proportional to 1/volatility — quieter assets get bigger weights."
+
+```python
+from lab.strategy import Strategy
+import pandas as pd
+
+class InverseVolWeight(Strategy):
+    name = "Inverse-vol weights"
+
+    def __init__(self, lookback: int = 60):
+        self.lookback = lookback
+
+    def rebalance(self, date: pd.Timestamp, history: pd.DataFrame) -> pd.Series:
+        if len(history) < self.lookback:
+            return pd.Series(0.0, index=history.columns)
+        vols = history.iloc[-self.lookback:].std()
+        inv = 1.0 / vols.replace(0.0, float("nan"))
+        inv = inv.fillna(0.0)
+        total = inv.sum()
+        if total <= 0:
+            return pd.Series(0.0, index=history.columns)
+        return inv / total
+```
+
+### Example 6: z-score mean reversion (long-only)
+
+User: "Buy the asset whose 5-day return is most negative relative to its 60-day mean — bet on rebound."
+
+```python
+from lab.strategy import Strategy
+import pandas as pd
+
+class ZScoreMeanReversion(Strategy):
+    name = "Z-score mean reversion"
+
+    def __init__(self, short_window: int = 5, long_window: int = 60):
+        self.short_window = short_window
+        self.long_window = long_window
+
+    def rebalance(self, date: pd.Timestamp, history: pd.DataFrame) -> pd.Series:
+        if len(history) < self.long_window:
+            return pd.Series(0.0, index=history.columns)
+        short_ret = history.iloc[-self.short_window:].sum()
+        long_mean = history.iloc[-self.long_window:].mean() * self.short_window
+        long_std = history.iloc[-self.long_window:].std() * (self.short_window ** 0.5)
+        z = (short_ret - long_mean) / long_std.replace(0.0, float("nan"))
+        # Long-only: we buy the most-oversold name.
+        target = z.idxmin()
+        w = pd.Series(0.0, index=history.columns)
+        if pd.notna(z[target]) and z[target] < -0.5:
+            w[target] = 1.0
+        return w
+```
+
+### Example 7: SMA crossover with weight tilt
+
+User: "Tilt toward SPY when its 50-day SMA is above its 200-day SMA, else hold cash."
+
+```python
+from lab.strategy import Strategy
+import numpy as np
+import pandas as pd
+
+class SMACrossSPY(Strategy):
+    name = "SPY 50/200 crossover"
+
+    def __init__(self, short: int = 50, long: int = 200):
+        self.short = short
+        self.long = long
+
+    def rebalance(self, date: pd.Timestamp, history: pd.DataFrame) -> pd.Series:
+        if len(history) < self.long:
+            return pd.Series(0.0, index=history.columns)
+        levels = np.exp(history["SPY"].cumsum())
+        sma_s = levels.rolling(self.short).mean().iloc[-1]
+        sma_l = levels.rolling(self.long).mean().iloc[-1]
+        w = pd.Series(0.0, index=history.columns)
+        if sma_s > sma_l:
+            w["SPY"] = 1.0  # 100% SPY in uptrend, else cash
+        return w
+```
+
 ## Common patterns you might use
 
 - **Convert log returns to prices:** `levels = np.exp(history.cumsum())`
@@ -118,6 +236,17 @@ class Top2Momentum(Strategy):
 - **Volatility:** `history.iloc[-N:].std() * np.sqrt(252)` (annualized)
 - **Z-score:** `(history.iloc[-N:].mean() - history.iloc[-M:].mean()) / history.iloc[-M:].std()` (with N < M)
 - **Inverse-vol weighting:** `vols = history.iloc[-N:].std(); w = (1/vols); w = w / w.sum()`
+- **Covariance matrix:** `history.iloc[-N:].cov()` — daily log-return covariance
+- **Portfolio vol from weights:** `np.sqrt(w @ cov @ w * 252)` — annualized
+- **Vol target sizing:** scale raw weights by `target_vol / portfolio_vol`, capped at `max_leverage / |w|.sum()`
+
+## Common gotchas to avoid
+
+- **Don't use today's row:** `history` strictly excludes `date`. `history.iloc[-1]` is yesterday's data.
+- **Don't divide by zero:** `vols.replace(0.0, float("nan"))` or guard with `if std > 0`.
+- **Don't return NaN/Inf weights:** the framework rejects them. Always fall back to a zero Series or unconditional weights when your signal isn't defined.
+- **Don't return a dict** — must be a pandas Series indexed by ticker.
+- **Don't assume the universe**: read columns from `history.columns`. Hardcoding tickers means the strategy breaks under a different universe.
 
 ## Output format
 

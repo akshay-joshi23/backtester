@@ -403,6 +403,29 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_system_prompt_examples_all_execute():
+    """Sanity-check: every code block in the system prompt should compile,
+    define a Strategy subclass, and survive the LLM validator. Catches
+    drift if I edit examples and break them."""
+    from lab.llm import _validate_generated_code, load_system_prompt
+    import re
+
+    text = load_system_prompt()
+    blocks = re.findall(r"```python\n(.*?)```", text, flags=re.DOTALL)
+    assert len(blocks) >= 3, "expected at least 3 examples in system prompt"
+    full_examples = 0
+    for i, block in enumerate(blocks):
+        # Skip the interface sketch (uses `...`) and bare-comment snippets.
+        if "class " not in block:
+            continue
+        if "..." in block.split("class ", 1)[-1][:200]:
+            continue
+        full_examples += 1
+        problem = _validate_generated_code(block)
+        assert problem is None, f"example #{i+1} failed validation: {problem}\n\n{block}"
+    assert full_examples >= 5, f"expected >=5 complete examples, got {full_examples}"
+
+
 def test_run_tree_renders_with_parent_child_relationships(tmp_path):
     """Manually plant fake run dirs with parent links and verify the tree."""
     from lab.runner import build_run_tree, format_run_tree

@@ -148,6 +148,36 @@ def cmd_compare(args: argparse.Namespace) -> int:
                 row.append(f"{v:.4f}")
         rows.append(row)
     print(tabulate(rows, headers=headers))
+
+    # B-7: Code diff between consecutive runs.
+    if args.diff and len(runs) >= 2:
+        import difflib
+        print("\n## Strategy code diff\n")
+        for i in range(len(runs) - 1):
+            a, b = runs[i], runs[i + 1]
+            diff = difflib.unified_diff(
+                a["strategy_code"].splitlines(keepends=True),
+                b["strategy_code"].splitlines(keepends=True),
+                fromfile=f"{a['run_id']} ({a['config'].get('strategy_name','?')})",
+                tofile=f"{b['run_id']} ({b['config'].get('strategy_name','?')})",
+                lineterm="",
+            )
+            d = "".join(diff)
+            if d.strip():
+                print(d)
+            else:
+                print(f"  (no code difference between {a['run_id']} and {b['run_id']})")
+            print()
+
+    # D-13: Overlaid equity-curve plot.
+    if args.plot:
+        from lab.report import render_comparison_plot
+        out = Path("runs") / f"compare_{'_'.join(args.run_ids)}.png"
+        plot_path = render_comparison_plot(runs, out)
+        print(f"\nComparison plot saved: {plot_path}")
+        if args.open:
+            import webbrowser
+            webbrowser.open(f"file://{plot_path.resolve()}")
     return 0
 
 
@@ -251,6 +281,12 @@ def main() -> int:
 
     p_cmp = sub.add_parser("compare", help="side-by-side compare two or more runs")
     p_cmp.add_argument("run_ids", nargs="+")
+    p_cmp.add_argument("--plot", action="store_true",
+                       help="render an overlaid equity-curve PNG")
+    p_cmp.add_argument("--diff", action="store_true",
+                       help="show unified diff of strategy code between runs")
+    p_cmp.add_argument("--open", action="store_true",
+                       help="open the plot in the default browser")
     p_cmp.set_defaults(func=cmd_compare)
 
     p_ref = sub.add_parser("run-reference", help="run a built-in reference strategy (no LLM)")

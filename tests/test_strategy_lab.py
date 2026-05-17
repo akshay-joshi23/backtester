@@ -403,6 +403,35 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_comparison_plot_renders(tmp_path):
+    from lab.report import render_comparison_plot
+
+    idx_a = pd.bdate_range("2020-01-06", periods=200)
+    idx_b = pd.bdate_range("2020-01-06", periods=200)
+    rng = np.random.default_rng(0)
+    eq_a = pd.Series(np.cumprod(1.0 + rng.normal(0.0005, 0.01, 200)), index=idx_a)
+    eq_b = pd.Series(np.cumprod(1.0 + rng.normal(0.0003, 0.012, 200)), index=idx_b)
+    runs = [
+        {"run_id": "A", "equity": eq_a,
+         "config": {"strategy_name": "StratA"}},
+        {"run_id": "B", "equity": eq_b,
+         "config": {"strategy_name": "StratB"}},
+    ]
+    out = tmp_path / "cmp.png"
+    render_comparison_plot(runs, out)
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_comparison_plot_rejects_single_run(tmp_path):
+    from lab.report import render_comparison_plot
+
+    idx = pd.bdate_range("2020-01-06", periods=50)
+    eq = pd.Series(np.ones(50), index=idx)
+    runs = [{"run_id": "A", "equity": eq, "config": {"strategy_name": "A"}}]
+    with pytest.raises(ValueError, match="at least 2"):
+        render_comparison_plot(runs, tmp_path / "x.png")
+
+
 def test_timeout_aborts_long_op():
     """SIGALRM-based timeout should raise after the deadline."""
     import time

@@ -193,6 +193,56 @@ HTML_TEMPLATE = """\
 """
 
 
+def render_comparison_plot(
+    runs: list[dict],
+    output_path: Path,
+    *,
+    normalize: bool = True,
+) -> Path:
+    """Overlay equity curves from multiple runs into a single PNG.
+
+    `normalize=True` (default) rebases each curve to start at 1.0 so the
+    visual comparison is about *relative* performance, not absolute final
+    NAV. The starting date is the earliest date that appears in *all* runs;
+    each curve is sliced to that intersection.
+    """
+    if len(runs) < 2:
+        raise ValueError("need at least 2 runs to compare")
+
+    # Find common date range.
+    common_start = max(r["equity"].index.min() for r in runs)
+    common_end = min(r["equity"].index.max() for r in runs)
+    if common_start >= common_end:
+        raise ValueError("runs don't overlap in time")
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
+                                    gridspec_kw={"height_ratios": [3, 1]})
+    for r in runs:
+        eq = r["equity"].loc[common_start:common_end]
+        if normalize:
+            eq = eq / eq.iloc[0]
+        label = f"{r['config'].get('strategy_name', '?')} [{r['run_id']}]"
+        ax1.plot(eq.index, eq.values, linewidth=1.3, label=label)
+        # Drawdown
+        cum = r["equity"].loc[common_start:common_end]
+        cum = cum / cum.iloc[0]
+        dd = (cum / cum.cummax() - 1.0) * 100.0
+        ax2.plot(dd.index, dd.values, linewidth=0.9, label=label)
+    ax1.set_ylabel("Cumulative return (×)" if normalize else "NAV")
+    ax1.set_title(f"Equity curve comparison ({len(runs)} runs)")
+    ax1.grid(alpha=0.3)
+    ax1.legend(loc="upper left", fontsize=9)
+    ax2.set_ylabel("Drawdown (%)")
+    ax2.set_xlabel("Date")
+    ax2.grid(alpha=0.3)
+    ax2.axhline(0.0, color="black", linewidth=0.6)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=110, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def render_run_report(run_dict: dict, *, output_path: Path | None = None) -> Path:
     """Write an HTML report for a single run. Returns the path to the HTML."""
     run_dir = Path(run_dict["run_dir"])

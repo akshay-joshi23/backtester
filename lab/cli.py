@@ -30,7 +30,9 @@ from lab.costs import FlatBpsPerLeg
 from lab.data import load_universe
 from lab.llm import generate_strategy
 from lab.metrics import annual_turnover, block_bootstrap_metrics, compute_metrics
-from lab.runner import RUNS_DIR, list_runs, load_run, run_backtest, save_run
+from lab.runner import (
+    RUNS_DIR, format_run_tree, list_runs, load_run, run_backtest, save_run,
+)
 from lab.strategies import CrossSectionalMomentum, EqualWeight, FixedMix
 
 logger = logging.getLogger(__name__)
@@ -38,9 +40,21 @@ logger = logging.getLogger(__name__)
 
 def cmd_backtest(args: argparse.Namespace) -> int:
     prompt = args.prompt
+    parent_run_id = getattr(args, "parent", None)
+    if parent_run_id:
+        # Compose: prepend parent's prompt + previous code as context.
+        parent = load_run(parent_run_id)
+        full_prompt = (
+            f"Previously you wrote this strategy (run {parent_run_id}, "
+            f"named '{parent['config'].get('strategy_name','?')}'):\n\n"
+            "```python\n" + parent["strategy_code"] + "```\n\n"
+            f"Now revise it for the following follow-up:\n\n{prompt}"
+        )
+    else:
+        full_prompt = prompt
     logger.info("Generating strategy code...")
     generation = generate_strategy(
-        prompt,
+        full_prompt,
         model=args.model,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
@@ -75,10 +89,25 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         cfg=cfg,
         strategy_name=strategy_name,
         universe=universe,
+        parent_run_id=parent_run_id,
     )
     print(f"\nRun saved: {artifacts.run_dir}")
+    if parent_run_id:
+        print(f"  Forked from: {parent_run_id}")
     _print_metrics_table([(artifacts.run_id, strategy_name, metrics)])
     return 0
+
+
+def cmd_tree(args: argparse.Namespace) -> int:
+    print(format_run_tree())
+    return 0
+
+
+def cmd_fork(args: argparse.Namespace) -> int:
+    """Shortcut for backtest with --parent."""
+    args.parent = args.run_id
+    args.prompt = args.followup
+    return cmd_backtest(args)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -283,6 +312,8 @@ def main() -> int:
 
     p_bt = sub.add_parser("backtest", help="generate a strategy from natural language and backtest it")
     p_bt.add_argument("prompt", help="natural-language strategy description")
+    p_bt.add_argument("--parent", default=None,
+                      help="fork from this run_id; prompt becomes a follow-up")
     p_bt.add_argument("--universe", nargs="+", help="override ticker universe")
     p_bt.add_argument("--train-end", default=None, help="OOS start date, e.g. 2015-01-01")
     p_bt.add_argument("--rebalance-freq", type=int, default=None, help="trading days between rebalances")
@@ -318,6 +349,25 @@ def main() -> int:
     p_cmp.add_argument("--open", action="store_true",
                        help="open the plot in the default browser")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_tree = sub.add_parser("tree", help="show the strategy-family tree across runs")
+    p_tree.set_defaults(func=cmd_tree)
+
+    p_fk = sub.add_parser("fork", help="fork from a prior run: re-generate strategy with follow-up")
+    p_fk.add_argument("run_id", help="parent run id")
+    p_fk.add_argument("followup", help="follow-up natural-language description")
+    # Mirror the relevant backtest args so cmd_fork can dispatch.
+    p_fk.add_argument("--universe", nargs="+", default=None)
+    p_fk.add_argument("--train-end", default=None)
+    p_fk.add_argument("--rebalance-freq", type=int, default=None)
+    p_fk.add_argument("--start", default="2010-01-01")
+    p_fk.add_argument("--end", default=None)
+    p_fk.add_argument("--cost-bps", type=float, default=5.0)
+    p_fk.add_argument("--timeout", type=float, default=120.0)
+    p_fk.add_argument("--model", default="claude-opus-4-7")
+    p_fk.add_argument("--temperature", type=float, default=0.2)
+    p_fk.add_argument("--max-tokens", type=int, default=4096)
+    p_fk.set_defaults(func=cmd_fork)
 
     p_ref = sub.add_parser("run-reference", help="run a built-in reference strategy (no LLM)")
     p_ref.add_argument("strategy", choices=sorted(REFERENCE_STRATEGIES))

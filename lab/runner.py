@@ -149,6 +149,7 @@ def save_run(
     strategy_name: str,
     universe: list[str],
     runs_dir: Path | None = None,
+    parent_run_id: str | None = None,
 ) -> RunArtifacts:
     """Persist all artifacts of one run to disk, return RunArtifacts."""
     runs_dir = runs_dir or RUNS_DIR
@@ -173,6 +174,7 @@ def save_run(
         "long_only": cfg.long_only,
         "max_leverage": cfg.max_leverage,
         "strategy_name": strategy_name,
+        "parent_run_id": parent_run_id,
     }, indent=2))
     equity.to_csv(run_dir / "equity.csv", header=["nav"])
     weights.to_csv(run_dir / "weights.csv")
@@ -266,5 +268,46 @@ def list_runs(runs_dir: Path | None = None) -> list[dict]:
             "sharpe": met.get("sharpe"),
             "cagr": met.get("cagr"),
             "max_drawdown": met.get("max_drawdown"),
+            "parent_run_id": cfg.get("parent_run_id"),
         })
     return out
+
+
+def build_run_tree(runs_dir: Path | None = None) -> dict[str | None, list[dict]]:
+    """Group runs by parent_run_id for ASCII-tree rendering.
+
+    Returns a dict mapping parent_run_id (or None for roots) to a list of
+    child run-summary dicts in chronological order.
+    """
+    by_parent: dict[str | None, list[dict]] = {}
+    for r in list_runs(runs_dir):
+        by_parent.setdefault(r["parent_run_id"], []).append(r)
+    for parent in by_parent:
+        by_parent[parent].sort(key=lambda x: x["run_id"])
+    return by_parent
+
+
+def format_run_tree(runs_dir: Path | None = None) -> str:
+    """Render the run-family tree as text. Roots are runs with no parent."""
+    by_parent = build_run_tree(runs_dir)
+    if not by_parent:
+        return "(no runs yet)"
+
+    lines: list[str] = []
+
+    def _node_label(r: dict) -> str:
+        sharpe = f"{r['sharpe']:.2f}" if r["sharpe"] is not None else "—"
+        cagr = f"{r['cagr']*100:.1f}%" if r["cagr"] is not None else "—"
+        return f"{r['run_id']}  {r['strategy_name']}  (Sharpe {sharpe}, CAGR {cagr})"
+
+    def _walk(parent_id: str | None, prefix: str):
+        children = by_parent.get(parent_id, [])
+        for i, child in enumerate(children):
+            is_last = i == len(children) - 1
+            connector = "└── " if is_last else "├── "
+            lines.append(prefix + connector + _node_label(child))
+            next_prefix = prefix + ("    " if is_last else "│   ")
+            _walk(child["run_id"], next_prefix)
+
+    _walk(None, "")
+    return "\n".join(lines)

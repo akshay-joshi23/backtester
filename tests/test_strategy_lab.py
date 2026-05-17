@@ -403,6 +403,54 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_run_tree_renders_with_parent_child_relationships(tmp_path):
+    """Manually plant fake run dirs with parent links and verify the tree."""
+    from lab.runner import build_run_tree, format_run_tree
+    import json
+
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+
+    def _plant(run_id, parent, name, sharpe=1.0, cagr=0.05):
+        d = runs_dir / run_id
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({
+            "strategy_name": name,
+            "universe": ["SPY"],
+            "parent_run_id": parent,
+            "train_end": "2015-01-01",
+            "rebalance_freq": 21,
+            "initial_wealth": 1.0,
+            "long_only": True,
+            "max_leverage": 1.0,
+        }))
+        (d / "metrics.json").write_text(json.dumps({
+            "sharpe": sharpe, "cagr": cagr, "max_drawdown": -0.1,
+        }))
+
+    _plant("a", None, "RootA")
+    _plant("b", "a",  "ChildOfA")
+    _plant("c", "b",  "GrandchildOfA")
+    _plant("d", None, "RootD")
+
+    tree = build_run_tree(runs_dir)
+    assert tree[None] and len(tree[None]) == 2  # two roots
+    assert tree["a"][0]["run_id"] == "b"
+    assert tree["b"][0]["run_id"] == "c"
+
+    text = format_run_tree(runs_dir)
+    # Expect both root entries and indentation for descendants.
+    assert "RootA" in text and "RootD" in text
+    assert "ChildOfA" in text and "GrandchildOfA" in text
+    # Grandchild should be more indented than child.
+    lines = text.splitlines()
+    child_line = next(l for l in lines if "ChildOfA" in l)
+    grand_line = next(l for l in lines if "GrandchildOfA" in l)
+    child_indent = len(child_line) - len(child_line.lstrip(" │"))
+    grand_indent = len(grand_line) - len(grand_line.lstrip(" │"))
+    assert grand_indent > child_indent
+
+
 def test_block_bootstrap_metrics_returns_ci_bounds():
     from lab.metrics import block_bootstrap_metrics
 

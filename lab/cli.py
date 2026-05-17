@@ -143,9 +143,47 @@ def _cmd_chat(args: argparse.Namespace) -> int:
 
 def cmd_sweep(args: argparse.Namespace) -> int:
     """Sweep one hyperparameter across a list of values for a saved run's code."""
-    from lab.sweep import parse_value_list, sweep_hyperparameter
+    from lab.sweep import parse_value_list, sweep_hyperparameter, walk_forward_sweep
     run = load_run(args.run_id)
     values = parse_value_list(args.values)
+    if args.walk_forward:
+        result = walk_forward_sweep(
+            run["strategy_code"],
+            param_name=args.param,
+            param_values=values,
+            universe=args.universe or run["config"]["universe"],
+            start=args.start,
+            end=args.end,
+            tuning_window_years=args.tuning_years,
+            retune_freq_years=args.retune_years,
+            initial_train_years=args.initial_train_years,
+            rebalance_freq=args.rebalance_freq or run["config"]["rebalance_freq"],
+            cost_bps=args.cost_bps,
+            long_only=run["config"].get("long_only", True),
+            max_leverage=run["config"].get("max_leverage", 1.0),
+            objective=args.objective,
+        )
+        print(f"## Walk-forward HP selection: {args.param} ∈ {values}\n")
+        print(f"Tuning window: {args.tuning_years}y, retune every {args.retune_years}y, "
+              f"objective: {args.objective}\n")
+        print("### Per-window winners")
+        if not result["per_window"].empty:
+            print(tabulate(result["per_window"], headers="keys", tablefmt="simple"))
+        print(f"\n### Aggregated OOS metrics")
+        agg = result["aggregated"]
+        for k in ("sharpe", "cagr", "max_drawdown", "calmar", "final_nav"):
+            v = agg.get(k)
+            if v is None:
+                continue
+            if k in ("cagr", "max_drawdown"):
+                print(f"  {k}: {v*100:.2f}%")
+            else:
+                print(f"  {k}: {v:.4f}")
+        if args.output:
+            out_path = Path(args.output)
+            result["per_window"].to_csv(out_path)
+            print(f"\nWalk-forward results saved: {out_path}")
+        return 0
     df = sweep_hyperparameter(
         run["strategy_code"],
         param_name=args.param,
@@ -504,6 +542,18 @@ def main() -> int:
     p_sw.add_argument("--rebalance-freq", type=int, default=None)
     p_sw.add_argument("--cost-bps", type=float, default=5.0)
     p_sw.add_argument("--output", default=None, help="path to write CSV of results")
+    p_sw.add_argument("--walk-forward", action="store_true",
+                      help="run real walk-forward HP selection (retune + apply OOS) "
+                           "instead of a single grid sweep")
+    p_sw.add_argument("--tuning-years", type=float, default=3.0,
+                      help="(walk-forward only) tuning-window length in years")
+    p_sw.add_argument("--retune-years", type=float, default=1.0,
+                      help="(walk-forward only) retune frequency in years")
+    p_sw.add_argument("--initial-train-years", type=float, default=3.0,
+                      help="(walk-forward only) data reserved before first OOS")
+    p_sw.add_argument("--objective", default="sharpe",
+                      choices=["sharpe", "sortino", "cagr", "calmar"],
+                      help="(walk-forward only) in-sample tuning objective")
     p_sw.set_defaults(func=cmd_sweep)
 
     args = p.parse_args()

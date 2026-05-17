@@ -403,6 +403,68 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_walk_forward_sweep_builds_schedule_and_picks_winner(tmp_path):
+    from lab.data import UniverseBundle
+    from lab.sweep import walk_forward_sweep, _build_walk_forward_schedule
+    import lab.sweep as sweep_mod
+
+    rng = np.random.default_rng(0)
+    n = 252 * 8  # 8 years of daily bars
+    idx = pd.bdate_range("2010-01-04", periods=n)
+    # Two tickers; first has positive drift, second flat.
+    rets = pd.DataFrame({
+        "A": rng.normal(0.0008, 0.012, n),
+        "B": rng.normal(0.0, 0.008, n),
+    }, index=idx)
+    prices = pd.DataFrame(np.exp(rets.cumsum()), index=idx, columns=rets.columns)
+    bundle = UniverseBundle(
+        prices=prices, returns=rets, tickers=("A", "B"),
+        start="2010", end=None, frequency="D",
+    )
+    sweep_mod.load_universe = lambda tickers, **kw: bundle
+
+    schedule = _build_walk_forward_schedule(
+        idx,
+        initial_train_years=3.0,
+        tuning_window_years=2.0,
+        retune_freq_years=1.0,
+    )
+    # 8 years - 3 initial = 5 OOS years; with retune_freq=1, expect ~5 windows.
+    assert 3 <= len(schedule) <= 6
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class Mom(Strategy):\n"
+        "    name = 'Mom'\n"
+        "    def __init__(self, lookback: int = 60):\n"
+        "        self.lookback = int(lookback)\n"
+        "    def rebalance(self, date, history):\n"
+        "        if len(history) < self.lookback:\n"
+        "            return pd.Series(0.0, index=history.columns)\n"
+        "        scores = history.iloc[-self.lookback:].sum()\n"
+        "        top = scores.nlargest(1).index\n"
+        "        w = pd.Series(0.0, index=history.columns)\n"
+        "        w.loc[top] = 1.0\n"
+        "        return w\n"
+    )
+    result = walk_forward_sweep(
+        code,
+        param_name="lookback",
+        param_values=[20, 60, 120],
+        universe=["A", "B"],
+        tuning_window_years=2.0,
+        retune_freq_years=1.0,
+        initial_train_years=3.0,
+        rebalance_freq=21,
+    )
+    assert "per_window" in result
+    assert "aggregated" in result
+    assert not result["per_window"].empty
+    # Stitched OOS equity should exist and be nonempty.
+    assert not result["oos_equity"].empty
+
+
 def test_bid_ask_spread_charges_half_spread_per_leg():
     from lab.costs import BidAskSpread
 

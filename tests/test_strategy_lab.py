@@ -373,6 +373,51 @@ def test_runner_rejects_multiple_strategy_subclasses():
         execute_strategy_code(code)
 
 
+def test_validate_generated_code_passes_for_valid():
+    from lab.llm import _validate_generated_code
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class Demo(Strategy):\n"
+        '    name = "Demo"\n'
+        "    def rebalance(self, date, history):\n"
+        "        return pd.Series({'SPY': 0.5, 'TLT': 0.5})\n"
+    )
+    assert _validate_generated_code(code) is None
+
+
+def test_validate_generated_code_catches_syntax_error():
+    from lab.llm import _validate_generated_code
+
+    code = "from lab.strategy import Strategy\nclass X(Strategy):\n  def rebalance("
+    problem = _validate_generated_code(code)
+    assert problem is not None and "SyntaxError" in problem
+
+
+def test_validate_generated_code_catches_no_strategy_class():
+    from lab.llm import _validate_generated_code
+
+    code = "x = 1\ny = 2\n"
+    problem = _validate_generated_code(code)
+    assert problem is not None and "no Strategy" in problem
+
+
+def test_validate_generated_code_catches_runtime_error():
+    from lab.llm import _validate_generated_code
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class Broken(Strategy):\n"
+        '    name = "Broken"\n'
+        "    def rebalance(self, date, history):\n"
+        "        raise ValueError('boom')\n"
+    )
+    problem = _validate_generated_code(code)
+    assert problem is not None and "ValueError" in problem
+
+
 def test_html_report_renders_and_is_self_contained(tmp_path):
     """Render a report and check it's a non-empty HTML with embedded PNGs."""
     from lab.report import render_run_report

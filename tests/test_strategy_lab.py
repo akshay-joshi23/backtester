@@ -790,6 +790,49 @@ def test_resample_rejects_bad_frequency():
         resample_to_frequency(bundle, "Q")
 
 
+def test_fundamentals_snapshot_dataclass_handles_missing_fields(monkeypatch):
+    """Mock yfinance to return a sparse .info dict; snapshot should fill None."""
+    from lab import fundamentals as f
+    class FakeTicker:
+        def __init__(self, t): self.t = t
+        @property
+        def info(self):
+            return {"marketCap": 1e11, "trailingPE": 25.0}
+    class FakeYF:
+        Ticker = FakeTicker
+    monkeypatch.setattr(f, "yf", FakeYF, raising=False)
+    # Patch via the import path used inside the function — yfinance is
+    # imported locally.
+    import sys
+    import types as _types
+    fake_mod = _types.SimpleNamespace(Ticker=FakeTicker)
+    monkeypatch.setitem(sys.modules, "yfinance", fake_mod)
+    snap = f.load_fundamentals_snapshot("AAPL")
+    assert snap.market_cap == 1e11
+    assert snap.trailing_pe == 25.0
+    assert snap.dividend_yield is None  # not in fake info
+    assert snap.sector is None
+
+
+def test_fundamentals_universe_returns_dataframe_or_empty(monkeypatch):
+    from lab import fundamentals as f
+    import sys
+    import types as _types
+
+    class FakeTicker:
+        def __init__(self, t): self.t = t
+        @property
+        def info(self):
+            return {"marketCap": 1e11, "dividendYield": 0.02}
+
+    fake_mod = _types.SimpleNamespace(Ticker=FakeTicker)
+    monkeypatch.setitem(sys.modules, "yfinance", fake_mod)
+    df = f.load_fundamentals_for_universe(["AAPL", "MSFT"])
+    assert not df.empty
+    assert "dividend_yield" in df.columns
+    assert df.index.tolist() == ["AAPL", "MSFT"]
+
+
 def test_container_sandbox_raises_when_docker_missing(monkeypatch):
     """If Docker isn't installed, the container path should raise a clear error."""
     import shutil

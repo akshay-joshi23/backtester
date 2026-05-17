@@ -19,11 +19,24 @@ Started 2026-05-17. This file is updated as I go through the 20 items agreed in 
 | 13 | E-14 | Short + leverage support | attempt | **DONE (simplified)** | 58c6213 | --long-short, --max-leverage CLI; LongShortMomentum ref; NO borrow costs (documented in commit) |
 | 14 | C-9 | Walk-forward HP sweep (opt-in) | attempt | **DONE (simplified)** | e682b65 | `lab sweep`; grid sweep, NOT full walk-forward HP selection (documented) |
 | 15 | F-18 | Sandboxed exec | attempt | **DONE (simplified)** | 965d509 | AST audit + opt-in `python -I` subprocess preflight; honest "not a security boundary" caveat |
-| 16 | A-4 | Pass universe sample to model | skipped | — | — | adds non-trivial latency/cost; need design call |
-| 17 | C-10 | SPA / White's reality check | skipped | — | — | statistical correctness needs review |
-| 18 | C-11 | Better cost model (bid-ask/slippage) | skipped | — | — | needs calibration-data choices |
-| 19 | E-15 | Multi-frequency bars | skipped | — | — | architectural change to data layer |
-| 20 | E-16 | Fundamentals data | skipped | — | — | vendor choice |
+| 16 | A-4 | Pass universe sample to model | ~~skipped~~ | **DONE (v2)** | bed4628 | `--data-aware`: 30d OHLC + corr matrix in prompt |
+| 17 | C-10 | SPA / White's reality check | ~~skipped~~ | **DONE (v2)** | 4f0d2de | Hansen 2005 SPA-c; `lab spa benchmark alt1 alt2 ...` |
+| 18 | C-11 | Better cost model (bid-ask/slippage) | ~~skipped~~ | **DONE (v2)** | b309413 | BidAskSpread + SquareRootImpact + realistic_cost_model; `--realistic-costs` |
+| 19 | E-15 | Multi-frequency bars | ~~skipped~~ | **DONE (v2)** | 91856ea | D/W/M via resampling; auto ann_factor; `--frequency` |
+| 20 | E-16 | Fundamentals data | ~~skipped~~ | **DONE (v2)** | fba6ec4 | yfinance current-snapshot; honest "NOT point-in-time" caveat |
+
+## v2 deepening session (2026-05-17 continued)
+
+The 5 "skipped" items got built. The 5 "attempt" items got their proper
+versions in parallel.
+
+| v2 ID | Item | v2 commit | Replaces / supplements |
+|-------|------|-----------|------------------------|
+| A-1 v2 | Multi-tool agent loop | f03f963 | supplements `--refine`; `--agent` flag |
+| B-5 v2 | Rich `lab chat` UI | 9877753 | replaces minimal input() loop; prompt_toolkit + rich + named sessions |
+| E-14 v2 | Borrow-cost model | 6c0ca8b | supplements `--long-short`; `BorrowCost`, `CompositeCostModel`, holding-cost loop |
+| C-9 v2 | Real walk-forward HP selection | 5efb2ce | supplements grid sweep; `lab sweep --walk-forward` |
+| F-18 v2 | Docker container sandbox | a10eb28 | supplements AST audit; `--container` flag |
 
 ## Definitions
 

@@ -28,7 +28,7 @@ from tabulate import tabulate
 from lab.backtest import BacktestConfig, walk_forward_backtest
 from lab.costs import FlatBpsPerLeg
 from lab.data import load_universe
-from lab.llm import generate_strategy, refine_strategy
+from lab.llm import build_universe_brief, generate_strategy, refine_strategy
 from lab.metrics import annual_turnover, block_bootstrap_metrics, compute_metrics
 from lab.runner import (
     RUNS_DIR, format_run_tree, list_runs, load_run, run_backtest, save_run,
@@ -55,12 +55,18 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         )
     else:
         full_prompt = prompt
+    universe_brief = None
+    if args.data_aware:
+        # Snap to whatever universe is going to be used.
+        sniff_universe = args.universe or ["SPY", "TLT"]
+        universe_brief = build_universe_brief(sniff_universe, sample_days=30)
     logger.info("Generating strategy code...")
     generation = generate_strategy(
         full_prompt,
         model=args.model,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
+        universe_brief=universe_brief,
     )
     print("--- generated strategy ---")
     print(generation.code)
@@ -516,6 +522,9 @@ def main() -> int:
     p_bt.add_argument("--realistic-costs", action="store_true",
                       help="use BidAskSpread + SquareRootImpact + BorrowCost; "
                            "more realistic than flat bps")
+    p_bt.add_argument("--data-aware", action="store_true",
+                      help="include 30-day universe sample + correlation matrix "
+                           "in the prompt (adds ~1-2k tokens per call)")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_ls = sub.add_parser("list", help="list saved runs")

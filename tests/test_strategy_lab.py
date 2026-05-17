@@ -403,6 +403,51 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_build_universe_brief_renders_markdown_table(tmp_path, monkeypatch):
+    """Should produce a markdown brief without hitting network."""
+    from lab.data import UniverseBundle
+    import lab.llm as llm_mod
+
+    rng = np.random.default_rng(0)
+    n = 60
+    idx = pd.bdate_range("2020-01-06", periods=n)
+    rets = pd.DataFrame(
+        rng.normal(0.0005, 0.01, size=(n, 3)),
+        index=idx, columns=["SPY", "TLT", "GLD"],
+    )
+    prices = pd.DataFrame(np.exp(rets.cumsum()), index=idx, columns=rets.columns)
+    bundle = UniverseBundle(
+        prices=prices, returns=rets, tickers=("SPY", "TLT", "GLD"),
+        start="2020", end=None, frequency="D",
+    )
+    monkeypatch.setattr(llm_mod, "load_universe", lambda *_a, **_k: bundle,
+                        raising=False)
+    # Need to patch the imported reference too, since build_universe_brief
+    # imports it inside the function.
+    import lab.data as data_mod
+    monkeypatch.setattr(data_mod, "load_universe", lambda *_a, **_k: bundle,
+                        raising=False)
+
+    brief = llm_mod.build_universe_brief(["SPY", "TLT", "GLD"], sample_days=30)
+    assert "SPY" in brief and "TLT" in brief and "GLD" in brief
+    assert "Correlation matrix" in brief
+    assert "ann_vol" in brief
+    assert "ret_1d" in brief and "ret_21d" in brief
+    # Should be a reasonable length — under 3kB.
+    assert 500 < len(brief) < 3000
+
+
+def test_build_universe_brief_graceful_on_load_failure(monkeypatch):
+    """If load_universe raises, brief should return a string, not raise."""
+    import lab.data as data_mod
+    monkeypatch.setattr(data_mod, "load_universe",
+                        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("nope")),
+                        raising=False)
+    from lab.llm import build_universe_brief
+    brief = build_universe_brief(["BOGUS"])
+    assert "unavailable" in brief.lower()
+
+
 def test_spa_test_high_p_value_when_no_alt_beats_benchmark():
     """All alts are pure noise → SPA should produce high p-value (no superiority)."""
     from lab.spa import spa_test

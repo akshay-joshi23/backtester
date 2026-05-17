@@ -104,6 +104,7 @@ def generate_strategy(
     api_key: str | None = None,
     validate: bool = True,
     max_retries: int = 2,
+    universe_brief: str | None = None,
 ) -> GenerationResult:
     """Call Anthropic with the system prompt + user description, parse out code.
 
@@ -120,7 +121,14 @@ def generate_strategy(
     client = _make_client(api_key)
     system_prompt = load_system_prompt()
 
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    user_content = prompt
+    if universe_brief:
+        user_content = (
+            "Strategy request:\n\n" + prompt + "\n\n" +
+            "Here is recent context on the universe you'll be trading:\n\n" +
+            universe_brief
+        )
+    messages: list[dict] = [{"role": "user", "content": user_content}]
     retry_reasons: list[str] = []
     usage_total = {
         "input_tokens": 0, "output_tokens": 0,
@@ -177,6 +185,68 @@ def generate_strategy(
         f"strategy generation failed validation after {max_retries + 1} attempts. "
         f"Reasons: {retry_reasons}"
     )
+
+
+def build_universe_brief(
+    tickers: list[str],
+    *,
+    end_date: str | None = None,
+    sample_days: int = 30,
+) -> str:
+    """Produce a short markdown brief of the universe for the LLM context.
+
+    Contents:
+      - Last `sample_days` of daily log returns: mean, std, annualized vol,
+        cumulative return.
+      - Pairwise correlation matrix over the same window.
+      - Most-recent OHLC-ish snapshot (just last close + 1d / 5d / 21d returns).
+
+    Capped at ~2k chars so it stays well under the token budget.
+    """
+    from lab.data import load_universe
+
+    try:
+        bundle = load_universe(tickers)
+    except Exception as e:
+        return f"_universe brief unavailable: {type(e).__name__}: {e}_"
+    rets = bundle.returns
+    if end_date is not None:
+        rets = rets.loc[rets.index <= end_date]
+    window = rets.iloc[-sample_days:] if len(rets) >= sample_days else rets
+    if window.empty:
+        return "_universe brief unavailable: no data in window_"
+
+    lines: list[str] = []
+    lines.append(f"### Universe data brief (last {len(window)} bars, "
+                 f"through {window.index.max().date()})")
+    lines.append("")
+    lines.append("Per-asset summary:")
+    lines.append("")
+    lines.append("| ticker | last_close | ret_1d | ret_5d | ret_21d | ann_vol |")
+    lines.append("|--------|-----------|--------|--------|---------|---------|")
+    prices = bundle.prices.loc[window.index]
+    for t in tickers:
+        last = prices[t].iloc[-1]
+        r1 = window[t].iloc[-1]
+        r5 = window[t].iloc[-5:].sum() if len(window) >= 5 else float("nan")
+        r21 = window[t].sum()
+        vol = window[t].std() * (252 ** 0.5)
+        lines.append(
+            f"| {t} | {last:.2f} | {r1*100:+.2f}% | {r5*100:+.2f}% | "
+            f"{r21*100:+.2f}% | {vol*100:.1f}% |"
+        )
+    lines.append("")
+    if len(tickers) >= 2 and len(window) >= 10:
+        corr = window.corr().round(2)
+        lines.append("Correlation matrix:")
+        lines.append("")
+        header = "| | " + " | ".join(tickers) + " |"
+        lines.append(header)
+        lines.append("|" + "---|" * (len(tickers) + 1))
+        for t in tickers:
+            row = f"| **{t}** | " + " | ".join(f"{corr.loc[t, c]:+.2f}" for c in tickers) + " |"
+            lines.append(row)
+    return "\n".join(lines)
 
 
 def refine_strategy(

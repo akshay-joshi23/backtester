@@ -403,6 +403,50 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_agent_tools_run_dry_backtest_returns_metrics():
+    from lab.agent import _tool_run_dry_backtest
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class S(Strategy):\n"
+        '    name = "S"\n'
+        "    def rebalance(self, date, history):\n"
+        "        return pd.Series({'SPY': 0.5, 'TLT': 0.5})\n"
+    )
+    result = _tool_run_dry_backtest(code)
+    assert isinstance(result, dict)
+    assert "sharpe" in result and "n_obs" in result
+
+
+def test_agent_tools_run_dry_backtest_returns_error_string_on_bug():
+    from lab.agent import _tool_run_dry_backtest
+
+    code = "import junk_that_doesnt_exist\n"
+    result = _tool_run_dry_backtest(code)
+    assert isinstance(result, str)
+    assert "error" in result.lower()
+
+
+def test_agent_tool_compute_metric():
+    from lab.agent import _tool_compute_metric
+
+    equity = [1.0 * (1.001 ** i) for i in range(252)]
+    v = _tool_compute_metric(equity, "cagr")
+    assert isinstance(v, float)
+    assert v > 0.20  # ~28.5% CAGR
+
+    err = _tool_compute_metric(equity, "fnord")
+    assert isinstance(err, str) and "unknown" in err
+
+
+def test_agent_tool_search_examples_finds_known_keyword():
+    from lab.agent import _tool_search_examples
+
+    out = _tool_search_examples("momentum")
+    assert "momentum" in out.lower() or "Momentum" in out
+
+
 def test_build_universe_brief_renders_markdown_table(tmp_path, monkeypatch):
     """Should produce a markdown brief without hitting network."""
     from lab.data import UniverseBundle

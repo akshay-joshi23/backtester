@@ -60,14 +60,23 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         # Snap to whatever universe is going to be used.
         sniff_universe = args.universe or ["SPY", "TLT"]
         universe_brief = build_universe_brief(sniff_universe, sample_days=30)
-    logger.info("Generating strategy code...")
-    generation = generate_strategy(
-        full_prompt,
-        model=args.model,
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        universe_brief=universe_brief,
-    )
+    if args.agent:
+        from lab.agent import run_agent
+        logger.info("Running agent loop (max 5 iterations)...")
+        generation = run_agent(
+            (full_prompt + ("\n\n" + universe_brief if universe_brief else "")),
+            model=args.model, max_tokens=args.max_tokens,
+            temperature=args.temperature,
+        )
+    else:
+        logger.info("Generating strategy code...")
+        generation = generate_strategy(
+            full_prompt,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            universe_brief=universe_brief,
+        )
     print("--- generated strategy ---")
     print(generation.code)
     print("--- end strategy ---\n")
@@ -513,6 +522,10 @@ def main() -> int:
     p_bt.add_argument("--refine", action="store_true",
                       help="after the initial run, ask the LLM to review the "
                            "code + metrics and propose a fix (single round)")
+    p_bt.add_argument("--agent", action="store_true",
+                      help="use the multi-tool agent loop: model can call "
+                           "run_dry_backtest / fetch_history / compute_metric "
+                           "/ search_examples and iterate up to 5 rounds")
     p_bt.add_argument("--sandbox", action="store_true",
                       help="pre-flight code in an isolated subprocess "
                            "(static audit + subprocess exec). Defense-in-depth, "

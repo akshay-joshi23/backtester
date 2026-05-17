@@ -15,8 +15,9 @@ dist/
 .coverage
 htmlcov/
 
-# strategy-lab caches and runs
+# strategy-lab caches, runs, and chat sessions
 .lab_cache/
+.lab_sessions/
 runs/
 !runs/.gitkeep
 

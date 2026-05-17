@@ -16,6 +16,8 @@ dependencies = [
     "tqdm>=4.66",
     "anthropic>=0.40",
     "tabulate>=0.9",
+    "prompt-toolkit>=3.0",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]

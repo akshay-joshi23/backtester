@@ -1008,6 +1008,45 @@ def test_chat_reset_clears_parent():
     assert state.parent_run_id is None
 
 
+def test_chat_universe_command_sets_universe():
+    from lab.chat import SessionState, _do_command
+
+    state = SessionState()
+    _do_command(state, ":universe SPY tlt GLD")
+    assert state.universe == ["SPY", "TLT", "GLD"]
+
+
+def test_chat_save_and_load_session(tmp_path, monkeypatch):
+    from lab import chat as chat_mod
+    from lab.chat import SessionState, _do_command
+
+    monkeypatch.setattr(chat_mod, "SESSIONS_DIR", tmp_path)
+    state = SessionState(
+        run_ids=["abc", "def"],
+        parent_run_id="def",
+        universe=["SPY", "TLT"],
+    )
+    _do_command(state, ":save my_session")
+    assert (tmp_path / "my_session.json").exists()
+
+    fresh = SessionState()
+    _do_command(fresh, ":load my_session")
+    assert fresh.run_ids == ["abc", "def"]
+    assert fresh.parent_run_id == "def"
+    assert fresh.universe == ["SPY", "TLT"]
+
+
+def test_chat_load_missing_session_is_graceful(tmp_path, monkeypatch):
+    from lab import chat as chat_mod
+    from lab.chat import SessionState, _do_command
+
+    monkeypatch.setattr(chat_mod, "SESSIONS_DIR", tmp_path)
+    state = SessionState()
+    # Should NOT raise; should print error.
+    assert _do_command(state, ":load nonexistent") is True
+    assert state.run_ids == []  # unchanged
+
+
 def test_refine_strategy_signature_exists():
     """Smoke test that refine_strategy is importable and has the documented signature."""
     from inspect import signature

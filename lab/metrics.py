@@ -10,6 +10,7 @@ def compute_metrics(
     equity: pd.Series,
     ann_factor: float = 252.0,
     rf_rate: float = 0.0,
+    frequency: str | None = None,
 ) -> dict[str, float]:
     """Standard headline metrics for a daily NAV series.
 
@@ -30,6 +31,9 @@ def compute_metrics(
         Keys: sharpe, sortino, ann_return, ann_vol, max_drawdown, calmar,
         cagr, final_nav, n_obs.
     """
+    if frequency is not None:
+        from lab.data import ANN_FACTOR
+        ann_factor = ANN_FACTOR.get(frequency.upper(), ann_factor)
     if len(equity) < 2:
         return {}
     rets = equity.pct_change().dropna()

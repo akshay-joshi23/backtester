@@ -403,6 +403,59 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_resample_to_weekly_aggregates_returns():
+    from lab.data import UniverseBundle, resample_to_frequency
+
+    idx = pd.bdate_range("2010-01-04", periods=250)
+    rng = np.random.default_rng(0)
+    rets = pd.DataFrame(rng.normal(0.0005, 0.01, size=(250, 2)),
+                        index=idx, columns=["X", "Y"])
+    prices = pd.DataFrame(np.exp(rets.cumsum()), index=idx, columns=rets.columns)
+    bundle = UniverseBundle(prices=prices, returns=rets,
+                            tickers=("X", "Y"), start="2010", end=None,
+                            frequency="D")
+    weekly = resample_to_frequency(bundle, "W")
+    assert weekly.frequency == "W"
+    # ~50 weeks for 250 trading days.
+    assert 40 <= len(weekly.returns) <= 55
+    # Weekly price ratios should match daily price ratios on the same end-dates.
+    # Take the first and last weekly bar and verify price change matches daily.
+    first_date = weekly.prices.index[0]
+    last_date = weekly.prices.index[-1]
+    daily_ratio = bundle.prices.loc[last_date] / bundle.prices.loc[first_date]
+    weekly_ratio = weekly.prices.iloc[-1] / weekly.prices.iloc[0]
+    np.testing.assert_allclose(daily_ratio.values, weekly_ratio.values, rtol=1e-9)
+
+
+def test_resample_to_monthly_correct_ann_factor():
+    from lab.data import ANN_FACTOR
+    from lab.metrics import compute_metrics
+
+    rng = np.random.default_rng(0)
+    idx = pd.date_range("2010-01-31", periods=60, freq="ME")
+    rets = rng.normal(0.005, 0.02, size=60)
+    nav = pd.Series(np.cumprod(1.0 + rets), index=idx)
+    monthly = compute_metrics(nav, frequency="M")
+    daily = compute_metrics(nav, frequency="D")
+    # Monthly Sharpe / vol should annualize by sqrt(12), not sqrt(252).
+    # Ratio of (monthly_vol / daily_vol) is sqrt(12/252).
+    expected_ratio = np.sqrt(12.0 / 252.0)
+    assert abs(monthly["ann_vol"] / daily["ann_vol"] - expected_ratio) < 1e-6
+    assert ANN_FACTOR["M"] == 12.0
+
+
+def test_resample_rejects_bad_frequency():
+    from lab.data import UniverseBundle, resample_to_frequency
+    idx = pd.bdate_range("2010-01-04", periods=10)
+    bundle = UniverseBundle(
+        prices=pd.DataFrame({"X": np.arange(10.0)}, index=idx),
+        returns=pd.DataFrame({"X": np.zeros(10)}, index=idx),
+        tickers=("X",), start="2010", end=None, frequency="D",
+    )
+    with pytest.raises(ValueError, match="unsupported frequency"):
+        resample_to_frequency(bundle, "Q")
+
+
 def test_sandbox_audit_blocks_socket_import():
     from lab.sandbox import AuditFailure, audit_code
 

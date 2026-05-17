@@ -34,7 +34,7 @@ import pandas as pd
 
 from lab.backtest import BacktestConfig, walk_forward_backtest
 from lab.costs import FlatBpsPerLeg
-from lab.data import UniverseBundle, load_universe
+from lab.data import UniverseBundle, load_universe, resample_to_frequency
 from lab.llm import GenerationResult
 from lab.metrics import annual_turnover, compute_metrics
 from lab.strategy import Strategy
@@ -105,6 +105,7 @@ def run_backtest(
     long_only: bool = True,
     max_leverage: float = 1.0,
     sandbox: bool = False,
+    frequency: str = "D",
 ) -> tuple[pd.Series, pd.DataFrame, dict, BacktestConfig, str]:
     """Execute strategy code and run the backtest. Returns the core artifacts.
 
@@ -125,6 +126,8 @@ def run_backtest(
         raise RuntimeError("instantiated object is not a Strategy")
     if bundle is None:
         bundle = load_universe(universe, start=start, end=end)
+    if frequency.upper() != "D":
+        bundle = resample_to_frequency(bundle, frequency)
     returns = bundle.returns
     missing = [t for t in universe if t not in returns.columns]
     if missing:
@@ -141,9 +144,13 @@ def run_backtest(
         result = walk_forward_backtest(
             strategy, returns, cfg=cfg, cost_model=FlatBpsPerLeg(bps=cost_bps),
         )
-    metrics = compute_metrics(result.equity)
-    metrics["annual_turnover"] = annual_turnover(result.turnover)
+    metrics = compute_metrics(result.equity, frequency=frequency)
+    from lab.data import ANN_FACTOR
+    metrics["annual_turnover"] = annual_turnover(
+        result.turnover, ann_factor=ANN_FACTOR.get(frequency.upper(), 252.0),
+    )
     metrics["total_transaction_cost"] = float(result.transaction_costs.sum())
+    metrics["frequency"] = frequency.upper()
     return result.equity, result.realized_weights, metrics, cfg, strategy.name
 
 

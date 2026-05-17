@@ -33,6 +33,41 @@ class UniverseBundle:
     tickers: tuple[str, ...]
     start: str
     end: str | None
+    frequency: str = "D"   # "D" = daily, "W" = weekly, "M" = monthly
+
+
+# Bars-per-year for each supported frequency. Used by metrics.compute_metrics
+# and the walk-forward engine to compute annualized stats correctly.
+ANN_FACTOR: dict[str, float] = {
+    "D": 252.0,
+    "W": 52.0,
+    "M": 12.0,
+}
+
+
+def resample_to_frequency(bundle: UniverseBundle, frequency: str) -> UniverseBundle:
+    """Resample a daily bundle to weekly (W-FRI) or monthly (M, last business day).
+
+    Returns a new UniverseBundle with the requested frequency. Prices are
+    end-of-period; log returns are the sum of within-period daily log returns
+    (equivalent to log(P_end / P_prev_end)).
+    """
+    frequency = frequency.upper()
+    if frequency == "D":
+        return bundle
+    if frequency not in ANN_FACTOR:
+        raise ValueError(f"unsupported frequency: {frequency!r}; use D, W, or M")
+    rule = {"W": "W-FRI", "M": "ME"}[frequency]
+    new_prices = bundle.prices.resample(rule).last().dropna(how="any")
+    new_returns = np.log(new_prices / new_prices.shift(1)).dropna(how="any")
+    return UniverseBundle(
+        prices=new_prices,
+        returns=new_returns,
+        tickers=bundle.tickers,
+        start=bundle.start,
+        end=bundle.end,
+        frequency=frequency,
+    )
 
 
 def _cache_key(tickers: tuple[str, ...], start: str, end: str | None) -> str:

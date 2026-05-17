@@ -85,6 +85,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         long_only=not args.long_short,
         max_leverage=args.max_leverage,
         sandbox=args.sandbox,
+        frequency=args.frequency,
     )
 
     if args.refine:
@@ -427,6 +428,8 @@ def main() -> int:
                       help="pre-flight code in an isolated subprocess "
                            "(static audit + subprocess exec). Defense-in-depth, "
                            "not a security boundary.")
+    p_bt.add_argument("--frequency", default="D", choices=["D", "W", "M"],
+                      help="bar frequency: D=daily, W=weekly, M=monthly")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_ls = sub.add_parser("list", help="list saved runs")

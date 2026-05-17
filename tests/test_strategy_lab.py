@@ -403,6 +403,31 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_block_bootstrap_metrics_returns_ci_bounds():
+    from lab.metrics import block_bootstrap_metrics
+
+    rng = np.random.default_rng(0)
+    rets = rng.normal(0.0003, 0.01, size=1000)
+    nav = pd.Series(np.cumprod(1.0 + rets), index=pd.bdate_range("2010-01-04", periods=1000))
+    boot = block_bootstrap_metrics(nav, block_size=20, n_resamples=200, seed=0)
+    for key in ["sharpe", "cagr", "max_drawdown"]:
+        assert key in boot
+        stats = boot[key]
+        assert {"mean", "std", "ci_low_95", "ci_high_95", "n_resamples"} <= stats.keys()
+        assert stats["ci_low_95"] <= stats["mean"] <= stats["ci_high_95"]
+        assert stats["std"] > 0
+        assert stats["n_resamples"] > 100
+
+
+def test_block_bootstrap_metrics_rejects_too_short_series():
+    from lab.metrics import block_bootstrap_metrics
+
+    nav = pd.Series(np.linspace(1.0, 1.05, 20),
+                    index=pd.bdate_range("2010-01-04", periods=20))
+    with pytest.raises(ValueError, match="block bootstrap"):
+        block_bootstrap_metrics(nav, block_size=20, n_resamples=100)
+
+
 def test_comparison_plot_renders(tmp_path):
     from lab.report import render_comparison_plot
 

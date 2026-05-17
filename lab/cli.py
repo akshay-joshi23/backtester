@@ -29,7 +29,7 @@ from lab.backtest import BacktestConfig, walk_forward_backtest
 from lab.costs import FlatBpsPerLeg
 from lab.data import load_universe
 from lab.llm import generate_strategy
-from lab.metrics import annual_turnover, compute_metrics
+from lab.metrics import annual_turnover, block_bootstrap_metrics, compute_metrics
 from lab.runner import RUNS_DIR, list_runs, load_run, run_backtest, save_run
 from lab.strategies import CrossSectionalMomentum, EqualWeight, FixedMix
 
@@ -102,6 +102,32 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     run = load_run(args.run_id)
+    if args.bootstrap:
+        boot = block_bootstrap_metrics(
+            run["equity"], block_size=args.block_size,
+            n_resamples=args.n_resamples, seed=0,
+        )
+        print(f"# Bootstrap CIs (block_size={args.block_size}, "
+              f"n_resamples={args.n_resamples}):")
+        rows = []
+        for key, stats in boot.items():
+            label = key.replace("_", " ").title()
+            if key in ("cagr", "max_drawdown"):
+                rows.append([
+                    label,
+                    f"{stats['mean']*100:.2f}%",
+                    f"±{stats['std']*100:.2f}%",
+                    f"[{stats['ci_low_95']*100:.2f}%, {stats['ci_high_95']*100:.2f}%]",
+                ])
+            else:
+                rows.append([
+                    label,
+                    f"{stats['mean']:.3f}",
+                    f"±{stats['std']:.3f}",
+                    f"[{stats['ci_low_95']:.3f}, {stats['ci_high_95']:.3f}]",
+                ])
+        print(tabulate(rows, headers=["metric", "mean", "std", "95% CI"]))
+        return 0
     if args.open:
         from lab.report import render_run_report
         html_path = render_run_report(run)
@@ -277,6 +303,10 @@ def main() -> int:
     p_sh.add_argument("run_id")
     p_sh.add_argument("--open", action="store_true",
                       help="render HTML report and open in browser")
+    p_sh.add_argument("--bootstrap", action="store_true",
+                      help="compute block-bootstrap CIs on key metrics")
+    p_sh.add_argument("--block-size", type=int, default=20)
+    p_sh.add_argument("--n-resamples", type=int, default=1000)
     p_sh.set_defaults(func=cmd_show)
 
     p_cmp = sub.add_parser("compare", help="side-by-side compare two or more runs")

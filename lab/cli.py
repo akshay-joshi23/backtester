@@ -33,7 +33,9 @@ from lab.metrics import annual_turnover, block_bootstrap_metrics, compute_metric
 from lab.runner import (
     RUNS_DIR, format_run_tree, list_runs, load_run, run_backtest, save_run,
 )
-from lab.strategies import CrossSectionalMomentum, EqualWeight, FixedMix
+from lab.strategies import (
+    BayesianRegime, CrossSectionalMomentum, EqualWeight, FixedMix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +242,7 @@ REFERENCE_STRATEGIES = {
     "60_40": lambda: FixedMix({"SPY": 0.6, "TLT": 0.4}, name="60/40 SPY-TLT"),
     "equal_weight": lambda: EqualWeight(),
     "momentum_top2_6m": lambda: CrossSectionalMomentum(lookback=126, top_k=2),
+    "bayesian_regime": lambda: BayesianRegime(K=3, vi_steps=3000),
 }
 
 

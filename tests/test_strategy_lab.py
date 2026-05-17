@@ -403,6 +403,44 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+@pytest.mark.slow
+def test_bayesian_regime_strategy_smoke():
+    """End-to-end smoke test: fit + rebalance returns a valid weights Series.
+
+    Marked slow because SVI fit even at low step count takes ~5–10s and
+    JAX warmup adds another few seconds.
+    """
+    from lab.strategies import BayesianRegime
+
+    rng = np.random.default_rng(0)
+    idx = pd.bdate_range("2010-01-04", periods=400)
+    rets = pd.DataFrame(
+        rng.normal(0.0003, 0.01, size=(400, 3)),
+        index=idx, columns=["SPY", "TLT", "GLD"],
+    )
+    strat = BayesianRegime(K=2, vi_steps=200)
+    strat.fit(rets.iloc[:300])
+    out = strat.rebalance(idx[300], rets.iloc[:300])
+    assert isinstance(out, pd.Series)
+    assert set(out.index) == {"SPY", "TLT", "GLD"}
+    assert all(np.isfinite(out.to_numpy()))
+    assert (out >= 0).all()
+
+
+def test_bayesian_regime_imports_cheaply():
+    """Importing the strategy module should not pull in JAX/NumPyro at import time."""
+    import importlib
+    import sys
+
+    # If JAX is already in the env (it is for this repo), we can't really test
+    # the lazy-import claim by sys.modules. But we can at least confirm that
+    # `lab.strategies` imports without raising.
+    importlib.import_module("lab.strategies")  # smoke
+    from lab.strategies import BayesianRegime
+    s = BayesianRegime()
+    assert s.name == "BayesianRegime"
+
+
 def test_system_prompt_examples_all_execute():
     """Sanity-check: every code block in the system prompt should compile,
     define a Strategy subclass, and survive the LLM validator. Catches

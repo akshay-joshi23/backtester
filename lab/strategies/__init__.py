@@ -9,4 +9,12 @@ These exist for three reasons:
 from lab.strategies.baselines import EqualWeight, FixedMix
 from lab.strategies.momentum import CrossSectionalMomentum
 
-__all__ = ["EqualWeight", "FixedMix", "CrossSectionalMomentum"]
+# Bayesian regime model — imports JAX/NumPyro lazily, so the bare import is cheap.
+from lab.strategies.bayesian_regime import BayesianRegime
+
+__all__ = [
+    "EqualWeight",
+    "FixedMix",
+    "CrossSectionalMomentum",
+    "BayesianRegime",
+]

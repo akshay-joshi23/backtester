@@ -1,20 +1,34 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
+# venv
 .venv/
 venv/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# pytest
 .pytest_cache/
-.ruff_cache/
 .coverage
 htmlcov/
-.ipynb_checkpoints/
-.claude/
 
-# Cached intermediate data (regeneratable from yfinance).
+# strategy-lab caches and runs
+.lab_cache/
+runs/
+!runs/.gitkeep
+
+# regime_model caches and outputs
 regime_model/cache/
+regime_model/outputs/
 
-# Outputs are checked in so REPORT.md references work standalone.
-# (Re-run notebooks/0*.py to regenerate.)
-
-.DS_Store
+# editor
+.vscode/
+.idea/
 *.swp
+.DS_Store
+
+# claude code session state
+.claude/

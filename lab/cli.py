@@ -28,7 +28,7 @@ from tabulate import tabulate
 from lab.backtest import BacktestConfig, walk_forward_backtest
 from lab.costs import FlatBpsPerLeg
 from lab.data import load_universe
-from lab.llm import generate_strategy
+from lab.llm import generate_strategy, refine_strategy
 from lab.metrics import annual_turnover, block_bootstrap_metrics, compute_metrics
 from lab.runner import (
     RUNS_DIR, format_run_tree, list_runs, load_run, run_backtest, save_run,
@@ -82,6 +82,33 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         cost_bps=args.cost_bps,
         timeout_seconds=args.timeout,
     )
+
+    if args.refine:
+        # A-1 simplified: single self-critique round w/ metrics feedback.
+        logger.info("Running refinement pass...")
+        refined = refine_strategy(
+            generation.code, metrics, full_prompt,
+            model=args.model, max_tokens=args.max_tokens,
+            temperature=args.temperature,
+        )
+        if refined.code.strip() != generation.code.strip():
+            logger.info("Refinement changed the code — re-running backtest")
+            print("--- refined strategy ---")
+            print(refined.code)
+            print("--- end refined strategy ---\n")
+            generation = refined
+            equity, weights, metrics, cfg, strategy_name = run_backtest(
+                generation.code,
+                universe=universe,
+                train_end=train_end,
+                rebalance_freq=rebalance_freq,
+                start=args.start,
+                end=args.end,
+                cost_bps=args.cost_bps,
+                timeout_seconds=args.timeout,
+            )
+        else:
+            logger.info("Refinement pass returned the same code — no rerun")
     artifacts = save_run(
         prompt=prompt,
         generation=generation,
@@ -328,6 +355,9 @@ def main() -> int:
     p_bt.add_argument("--model", default="claude-opus-4-7")
     p_bt.add_argument("--temperature", type=float, default=0.2)
     p_bt.add_argument("--max-tokens", type=int, default=4096)
+    p_bt.add_argument("--refine", action="store_true",
+                      help="after the initial run, ask the LLM to review the "
+                           "code + metrics and propose a fix (single round)")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_ls = sub.add_parser("list", help="list saved runs")

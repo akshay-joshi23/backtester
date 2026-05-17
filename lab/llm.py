@@ -179,6 +179,59 @@ def generate_strategy(
     )
 
 
+def refine_strategy(
+    prior_code: str,
+    prior_metrics: dict,
+    user_prompt: str,
+    *,
+    model: str = MODEL,
+    max_tokens: int = 4096,
+    temperature: float = 0.2,
+    api_key: str | None = None,
+) -> GenerationResult:
+    """One-shot refinement: hand the model its prior code + dry-run metrics,
+    ask if anything looks off, get either the same code back or a fix.
+
+    This is the simplified version of an "agentic" loop — single feedback
+    round, no tools, no multi-step exploration. Returns a GenerationResult
+    with the refined (or unchanged) code.
+    """
+    client = _make_client(api_key)
+    system_prompt = load_system_prompt()
+
+    metrics_summary = "\n".join(
+        f"  {k}: {v:.4f}" if isinstance(v, (int, float)) else f"  {k}: {v}"
+        for k, v in prior_metrics.items()
+    )
+    refinement_prompt = (
+        f"Original user request:\n\n{user_prompt}\n\n"
+        f"You wrote this strategy:\n\n```python\n{prior_code}\n```\n\n"
+        f"A dry backtest produced these metrics:\n\n{metrics_summary}\n\n"
+        "Review the code AND the metrics. If the strategy is doing what the "
+        "user asked AND the metrics look reasonable, return the SAME code "
+        "unchanged in a python code block. If you spot a bug (wrong sign, "
+        "missing edge case, suspicious all-zero weights, etc.), return the "
+        "corrected version. Either way: code only, no prose."
+    )
+    response = _call_anthropic(
+        client,
+        [{"role": "user", "content": refinement_prompt}],
+        model=model, max_tokens=max_tokens,
+        temperature=temperature, system_prompt=system_prompt,
+    )
+    raw = "".join(
+        b.text for b in response.content if getattr(b, "type", "") == "text"
+    )
+    code = _extract_python_block(raw)
+    universe, train_end, rebalance_freq = _parse_defaults(code)
+    return GenerationResult(
+        code=code, raw_response=raw, universe=universe,
+        train_end=train_end, rebalance_freq=rebalance_freq,
+        usage=_extract_usage(response), attempts=1,
+        retry_reasons=["refinement pass"],
+    )
+
+
 def _ruff_check(code: str) -> str | None:
     """Run ruff with pyflakes rules; return error string or None.
 

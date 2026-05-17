@@ -403,6 +403,18 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_refine_strategy_signature_exists():
+    """Smoke test that refine_strategy is importable and has the documented signature."""
+    from inspect import signature
+
+    from lab.llm import refine_strategy
+
+    sig = signature(refine_strategy)
+    assert "prior_code" in sig.parameters
+    assert "prior_metrics" in sig.parameters
+    assert "user_prompt" in sig.parameters
+
+
 @pytest.mark.slow
 def test_bayesian_regime_strategy_smoke():
     """End-to-end smoke test: fit + rebalance returns a valid weights Series.

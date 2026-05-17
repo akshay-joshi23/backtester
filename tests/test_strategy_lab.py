@@ -403,6 +403,67 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_sweep_hyperparameter_runs_multiple_values(tmp_path):
+    from lab.data import UniverseBundle
+    from lab.sweep import parse_value_list, sweep_hyperparameter
+    import lab.sweep as sweep_mod
+
+    # Build a synthetic UniverseBundle so we don't hit yfinance.
+    rng = np.random.default_rng(0)
+    n = 800
+    idx = pd.bdate_range("2010-01-04", periods=n)
+    rets = pd.DataFrame(
+        rng.normal(0.0003, 0.01, size=(n, 3)),
+        index=idx, columns=["SPY", "TLT", "GLD"],
+    )
+    prices = pd.DataFrame(np.exp(rets.cumsum()), index=idx, columns=rets.columns)
+    bundle = UniverseBundle(
+        prices=prices, returns=rets, tickers=("SPY", "TLT", "GLD"),
+        start="2010-01-01", end=None,
+    )
+
+    # Monkey-patch load_universe inside sweep module.
+    def fake_loader(tickers, **kw):
+        return bundle
+    sweep_mod.load_universe = fake_loader
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class Mom(Strategy):\n"
+        "    name = 'Mom'\n"
+        "    def __init__(self, lookback: int = 60):\n"
+        "        self.lookback = int(lookback)\n"
+        "    def rebalance(self, date, history):\n"
+        "        if len(history) < self.lookback:\n"
+        "            return pd.Series(0.0, index=history.columns)\n"
+        "        scores = history.iloc[-self.lookback:].sum()\n"
+        "        top = scores.nlargest(1).index\n"
+        "        w = pd.Series(0.0, index=history.columns)\n"
+        "        w.loc[top] = 1.0\n"
+        "        return w\n"
+    )
+    df = sweep_hyperparameter(
+        code,
+        param_name="lookback",
+        param_values=[30, 60, 120],
+        universe=["SPY", "TLT", "GLD"],
+        train_end=idx[200].strftime("%Y-%m-%d"),
+        rebalance_freq=21,
+    )
+    assert len(df) == 3
+    assert "sharpe" in df.columns
+    assert df.index.name == "lookback"
+
+
+def test_sweep_parse_value_list_types():
+    from lab.sweep import parse_value_list
+    assert parse_value_list("60,120,250") == [60, 120, 250]
+    assert parse_value_list("0.05,0.1,0.2") == [0.05, 0.1, 0.2]
+    assert parse_value_list("a,b,c") == ["a", "b", "c"]
+    assert parse_value_list("60, 0.5, foo") == [60, 0.5, "foo"]
+
+
 def test_backtest_accepts_short_weights_when_long_only_off():
     """long_only=False lets negative weights through; gross exposure is capped."""
     from lab.strategy import Strategy

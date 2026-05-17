@@ -137,6 +137,47 @@ def _cmd_chat(args: argparse.Namespace) -> int:
     return run_chat()
 
 
+def cmd_sweep(args: argparse.Namespace) -> int:
+    """Sweep one hyperparameter across a list of values for a saved run's code."""
+    from lab.sweep import parse_value_list, sweep_hyperparameter
+    run = load_run(args.run_id)
+    values = parse_value_list(args.values)
+    df = sweep_hyperparameter(
+        run["strategy_code"],
+        param_name=args.param,
+        param_values=values,
+        universe=args.universe or run["config"]["universe"],
+        start=args.start,
+        end=args.end,
+        train_end=args.train_end or run["config"]["train_end"],
+        rebalance_freq=args.rebalance_freq or run["config"]["rebalance_freq"],
+        cost_bps=args.cost_bps,
+        long_only=run["config"].get("long_only", True),
+        max_leverage=run["config"].get("max_leverage", 1.0),
+    )
+    print(f"## Sweep: {args.param} ∈ {values}\n")
+    # Format columns nicely.
+    display = df.copy()
+    for col in ("cagr", "ann_vol", "max_drawdown"):
+        if col in display.columns:
+            display[col] = display[col].map(
+                lambda v: f"{v*100:.2f}%" if pd.notna(v) else "—"
+            )
+    for col in ("sharpe", "calmar", "final_nav"):
+        if col in display.columns:
+            display[col] = display[col].map(
+                lambda v: f"{v:.3f}" if pd.notna(v) else "—"
+            )
+    print(tabulate(display.reset_index(), headers="keys", tablefmt="simple",
+                   showindex=False))
+    # Optional save.
+    if args.output:
+        out_path = Path(args.output)
+        df.to_csv(out_path)
+        print(f"\nSweep results saved: {out_path}")
+    return 0
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     print(format_run_tree())
     return 0
@@ -437,6 +478,20 @@ def main() -> int:
     p_ref.add_argument("--cost-bps", type=float, default=5.0)
     p_ref.add_argument("--max-leverage", type=float, default=1.0)
     p_ref.set_defaults(func=cmd_run_reference)
+
+    p_sw = sub.add_parser("sweep", help="sweep one hyperparameter for a saved run's strategy")
+    p_sw.add_argument("run_id", help="base run id; the strategy code is taken from here")
+    p_sw.add_argument("--param", required=True, help="constructor kwarg to vary")
+    p_sw.add_argument("--values", required=True,
+                      help="comma-separated values, e.g. '60,120,250' or '0.05,0.1,0.2'")
+    p_sw.add_argument("--universe", nargs="+", default=None)
+    p_sw.add_argument("--start", default="2010-01-01")
+    p_sw.add_argument("--end", default=None)
+    p_sw.add_argument("--train-end", default=None)
+    p_sw.add_argument("--rebalance-freq", type=int, default=None)
+    p_sw.add_argument("--cost-bps", type=float, default=5.0)
+    p_sw.add_argument("--output", default=None, help="path to write CSV of results")
+    p_sw.set_defaults(func=cmd_sweep)
 
     args = p.parse_args()
     return args.func(args)

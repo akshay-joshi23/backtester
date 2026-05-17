@@ -12,6 +12,38 @@ import pandas as pd
 from lab.strategy import Strategy
 
 
+class LongShortMomentum(Strategy):
+    """Long top-k, short bottom-k by trailing return — dollar-neutral.
+
+    Requires `long_only=False` in BacktestConfig (cfg.long_only=False).
+    Gross exposure is `2 * target_leg_size * top_k` (capped by max_leverage).
+    """
+
+    def __init__(
+        self,
+        lookback: int = 126,
+        top_k: int = 2,
+        target_leg_size: float = 0.25,
+        name: str | None = None,
+    ):
+        self.lookback = int(lookback)
+        self.top_k = int(top_k)
+        self.target_leg_size = float(target_leg_size)
+        self.name = name or f"LSMomentum(lookback={lookback},top_k={top_k})"
+
+    def rebalance(self, date: pd.Timestamp, history: pd.DataFrame) -> pd.Series:
+        if len(history) < self.lookback or len(history.columns) < 2 * self.top_k:
+            return pd.Series(0.0, index=history.columns)
+        window = history.iloc[-self.lookback:]
+        scores = window.sum(axis=0)
+        longs = scores.nlargest(self.top_k).index
+        shorts = scores.nsmallest(self.top_k).index
+        w = pd.Series(0.0, index=history.columns)
+        w.loc[longs] = self.target_leg_size
+        w.loc[shorts] = -self.target_leg_size
+        return w
+
+
 class CrossSectionalMomentum(Strategy):
     """Long the top-k tickers by trailing return, equal-weight.
 

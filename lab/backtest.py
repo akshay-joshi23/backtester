@@ -183,9 +183,12 @@ def _coerce_weights(
     if cfg.long_only and (arr < -1e-9).any():
         bad = aligned[aligned < -1e-9].to_dict()
         raise StrategyError(f"long_only=True but got negative weights: {bad}")
-    total = float(np.abs(arr).sum())
-    if total > cfg.max_leverage + 1e-9:
-        arr = arr * (cfg.max_leverage / total)
+    # Renormalize by gross exposure if it exceeds the leverage cap. This
+    # works for both long-only (sum |w| = sum w) and long/short (sum |w| >
+    # net exposure) cases.
+    gross = float(np.abs(arr).sum())
+    if gross > cfg.max_leverage + 1e-9:
+        arr = arr * (cfg.max_leverage / gross)
     if cfg.long_only:
         arr = np.clip(arr, 0.0, None)
     if not np.all(np.isfinite(arr)):

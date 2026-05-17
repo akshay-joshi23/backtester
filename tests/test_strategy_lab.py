@@ -403,6 +403,79 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_backtest_accepts_short_weights_when_long_only_off():
+    """long_only=False lets negative weights through; gross exposure is capped."""
+    from lab.strategy import Strategy
+
+    class LongShortFixed(Strategy):
+        name = "LongShortFixed"
+        def rebalance(self, date, history):
+            return pd.Series({"X": 0.5, "Y": -0.5})
+
+    rets = make_synthetic_returns(n_days=500, tickers=("X", "Y"))
+    cfg = BacktestConfig(
+        train_end=rets.index[100].strftime("%Y-%m-%d"),
+        rebalance_freq=21,
+        long_only=False,
+        max_leverage=1.0,
+    )
+    res = walk_forward_backtest(LongShortFixed(), rets, cfg=cfg, cost_model=ZeroCost())
+    rb = res.target_weights.loc[res.rebalance_dates[0]]
+    assert rb["X"] > 0 and rb["Y"] < 0
+    # Gross exposure should be 1.0 (long 0.5, short 0.5).
+    assert abs(rb.abs().sum() - 1.0) < 1e-9
+
+
+def test_backtest_renormalizes_gross_leverage_with_shorts():
+    """Sum |w| = 2.0 should be scaled down to max_leverage=1.0."""
+    from lab.strategy import Strategy
+
+    class OverLeveredLS(Strategy):
+        name = "OverLeveredLS"
+        def rebalance(self, date, history):
+            return pd.Series({"X": 1.0, "Y": -1.0})
+
+    rets = make_synthetic_returns(n_days=500, tickers=("X", "Y"))
+    cfg = BacktestConfig(
+        train_end=rets.index[100].strftime("%Y-%m-%d"),
+        rebalance_freq=21,
+        long_only=False,
+        max_leverage=1.0,
+    )
+    res = walk_forward_backtest(OverLeveredLS(), rets, cfg=cfg, cost_model=ZeroCost())
+    rb = res.target_weights.loc[res.rebalance_dates[0]]
+    # After scaling: gross 1.0 → each leg becomes 0.5.
+    assert abs(rb.abs().sum() - 1.0) < 1e-9
+
+
+def test_long_short_momentum_strategy_short_weights():
+    from lab.strategies import LongShortMomentum
+
+    rng = np.random.default_rng(0)
+    n = 500
+    idx = pd.bdate_range("2010-01-04", periods=n)
+    rets = pd.DataFrame({
+        "A": rng.normal(0.002, 0.005, n),
+        "B": rng.normal(0.0, 0.005, n),
+        "C": rng.normal(-0.002, 0.005, n),
+        "D": rng.normal(0.001, 0.005, n),
+    }, index=idx)
+    cfg = BacktestConfig(
+        train_end=idx[200].strftime("%Y-%m-%d"),
+        rebalance_freq=21,
+        long_only=False,
+        max_leverage=2.0,
+    )
+    strat = LongShortMomentum(lookback=126, top_k=1, target_leg_size=0.5)
+    res = walk_forward_backtest(strat, rets, cfg=cfg, cost_model=ZeroCost())
+    rb = res.target_weights.loc[res.rebalance_dates[0]]
+    assert (rb > 0).sum() == 1
+    assert (rb < 0).sum() == 1
+    # A has positive drift, C negative → expect long A, short C.
+    assert rb["A"] > 0
+    assert rb["C"] < 0
+
+
 def test_chat_command_handler_handles_help_and_unknown():
     """Smoke test the :help and unknown-command paths without hitting the LLM."""
     from lab.chat import SessionState, _do_command

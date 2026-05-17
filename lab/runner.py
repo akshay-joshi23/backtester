@@ -102,6 +102,8 @@ def run_backtest(
     initial_wealth: float = 1.0,
     bundle: UniverseBundle | None = None,
     timeout_seconds: float = 120.0,
+    long_only: bool = True,
+    max_leverage: float = 1.0,
 ) -> tuple[pd.Series, pd.DataFrame, dict, BacktestConfig, str]:
     """Execute strategy code and run the backtest. Returns the core artifacts.
 
@@ -127,6 +129,8 @@ def run_backtest(
         train_end=train_end,
         rebalance_freq=rebalance_freq,
         initial_wealth=initial_wealth,
+        long_only=long_only,
+        max_leverage=max_leverage,
     )
     with deadline_timeout(timeout_seconds):
         result = walk_forward_backtest(

@@ -7,7 +7,7 @@ These exist for three reasons:
 """
 
 from lab.strategies.baselines import EqualWeight, FixedMix
-from lab.strategies.momentum import CrossSectionalMomentum
+from lab.strategies.momentum import CrossSectionalMomentum, LongShortMomentum
 
 # Bayesian regime model — imports JAX/NumPyro lazily, so the bare import is cheap.
 from lab.strategies.bayesian_regime import BayesianRegime
@@ -16,5 +16,6 @@ __all__ = [
     "EqualWeight",
     "FixedMix",
     "CrossSectionalMomentum",
+    "LongShortMomentum",
     "BayesianRegime",
 ]

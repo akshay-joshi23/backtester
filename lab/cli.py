@@ -35,6 +35,7 @@ from lab.runner import (
 )
 from lab.strategies import (
     BayesianRegime, CrossSectionalMomentum, EqualWeight, FixedMix,
+    LongShortMomentum,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         end=args.end,
         cost_bps=args.cost_bps,
         timeout_seconds=args.timeout,
+        long_only=not args.long_short,
+        max_leverage=args.max_leverage,
     )
 
     if args.refine:
@@ -106,6 +109,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
                 end=args.end,
                 cost_bps=args.cost_bps,
                 timeout_seconds=args.timeout,
+                long_only=not args.long_short,
+                max_leverage=args.max_leverage,
             )
         else:
             logger.info("Refinement pass returned the same code — no rerun")
@@ -274,8 +279,12 @@ REFERENCE_STRATEGIES = {
     "60_40": lambda: FixedMix({"SPY": 0.6, "TLT": 0.4}, name="60/40 SPY-TLT"),
     "equal_weight": lambda: EqualWeight(),
     "momentum_top2_6m": lambda: CrossSectionalMomentum(lookback=126, top_k=2),
+    "long_short_momentum": lambda: LongShortMomentum(lookback=126, top_k=2),
     "bayesian_regime": lambda: BayesianRegime(K=3, vi_steps=3000),
 }
+
+# Strategies that require long_only=False.
+LONG_SHORT_REFERENCES = {"long_short_momentum"}
 
 
 def cmd_run_reference(args: argparse.Namespace) -> int:
@@ -286,7 +295,11 @@ def cmd_run_reference(args: argparse.Namespace) -> int:
     strategy = factory()
     universe = args.universe or ["SPY", "TLT", "QQQ", "GLD"]
     bundle = load_universe(universe, start=args.start, end=args.end)
-    cfg = BacktestConfig(train_end=args.train_end, rebalance_freq=args.rebalance_freq)
+    long_only = args.strategy not in LONG_SHORT_REFERENCES
+    cfg = BacktestConfig(
+        train_end=args.train_end, rebalance_freq=args.rebalance_freq,
+        long_only=long_only, max_leverage=args.max_leverage,
+    )
     res = walk_forward_backtest(
         strategy, bundle.returns[universe], cfg=cfg,
         cost_model=FlatBpsPerLeg(args.cost_bps),
@@ -355,6 +368,10 @@ def main() -> int:
     p_bt.add_argument("--start", default="2010-01-01", help="data fetch start")
     p_bt.add_argument("--end", default=None, help="data fetch end (exclusive)")
     p_bt.add_argument("--cost-bps", type=float, default=5.0)
+    p_bt.add_argument("--long-short", action="store_true",
+                      help="allow negative weights (shorts). Default long-only.")
+    p_bt.add_argument("--max-leverage", type=float, default=1.0,
+                      help="gross leverage cap (sum |w| ≤ N). Default 1.0.")
     p_bt.add_argument("--timeout", type=float, default=120.0,
                       help="seconds; aborts runaway backtests. 0 to disable.")
     p_bt.add_argument("--model", default="claude-opus-4-7")
@@ -418,6 +435,7 @@ def main() -> int:
     p_ref.add_argument("--train-end", default="2015-01-01")
     p_ref.add_argument("--rebalance-freq", type=int, default=21)
     p_ref.add_argument("--cost-bps", type=float, default=5.0)
+    p_ref.add_argument("--max-leverage", type=float, default=1.0)
     p_ref.set_defaults(func=cmd_run_reference)
 
     args = p.parse_args()

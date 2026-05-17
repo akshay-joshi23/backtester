@@ -104,6 +104,7 @@ def run_backtest(
     timeout_seconds: float = 120.0,
     long_only: bool = True,
     max_leverage: float = 1.0,
+    sandbox: bool = False,
 ) -> tuple[pd.Series, pd.DataFrame, dict, BacktestConfig, str]:
     """Execute strategy code and run the backtest. Returns the core artifacts.
 
@@ -114,6 +115,10 @@ def run_backtest(
     -------
     (equity, realized_weights, metrics, config, strategy_name)
     """
+    if sandbox:
+        from lab.sandbox import run_strategy_code_sandboxed
+        # Pre-flight in a subprocess; if it passes, execute in-process for speed.
+        run_strategy_code_sandboxed(code)
     cls = execute_strategy_code(code)
     strategy = cls()  # type: ignore[call-arg]
     if not isinstance(strategy, Strategy):

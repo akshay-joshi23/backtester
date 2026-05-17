@@ -403,6 +403,69 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_sandbox_audit_blocks_socket_import():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "import socket\nsocket.socket()\n"
+    with pytest.raises(AuditFailure, match="socket"):
+        audit_code(code)
+
+
+def test_sandbox_audit_blocks_subprocess():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "import subprocess\nsubprocess.run(['ls'])\n"
+    with pytest.raises(AuditFailure, match="subprocess"):
+        audit_code(code)
+
+
+def test_sandbox_audit_blocks_os_system():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "import os\nos.system('rm -rf /tmp/foo')\n"
+    with pytest.raises(AuditFailure, match="os.system"):
+        audit_code(code)
+
+
+def test_sandbox_audit_blocks_eval():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "x = eval('1+1')\n"
+    with pytest.raises(AuditFailure, match="eval"):
+        audit_code(code)
+
+
+def test_sandbox_audit_blocks_write_open():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "f = open('/tmp/x', 'w')\n"
+    with pytest.raises(AuditFailure, match="open"):
+        audit_code(code)
+
+
+def test_sandbox_audit_blocks_class_introspection():
+    from lab.sandbox import AuditFailure, audit_code
+
+    code = "x = ().__class__.__bases__\n"
+    with pytest.raises(AuditFailure, match="__class__"):
+        audit_code(code)
+
+
+def test_sandbox_audit_passes_for_clean_strategy():
+    from lab.sandbox import audit_code
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n"
+        "import numpy as np\n\n"
+        "class S(Strategy):\n"
+        "    name = 'S'\n"
+        "    def rebalance(self, date, history):\n"
+        "        return pd.Series({'SPY': 1.0})\n"
+    )
+    audit_code(code)  # should not raise
+
+
 def test_sweep_hyperparameter_runs_multiple_values(tmp_path):
     from lab.data import UniverseBundle
     from lab.sweep import parse_value_list, sweep_hyperparameter

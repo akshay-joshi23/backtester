@@ -84,6 +84,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout,
         long_only=not args.long_short,
         max_leverage=args.max_leverage,
+        sandbox=args.sandbox,
     )
 
     if args.refine:
@@ -111,6 +112,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
                 timeout_seconds=args.timeout,
                 long_only=not args.long_short,
                 max_leverage=args.max_leverage,
+                sandbox=args.sandbox,
             )
         else:
             logger.info("Refinement pass returned the same code — no rerun")
@@ -421,6 +423,10 @@ def main() -> int:
     p_bt.add_argument("--refine", action="store_true",
                       help="after the initial run, ask the LLM to review the "
                            "code + metrics and propose a fix (single round)")
+    p_bt.add_argument("--sandbox", action="store_true",
+                      help="pre-flight code in an isolated subprocess "
+                           "(static audit + subprocess exec). Defense-in-depth, "
+                           "not a security boundary.")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_ls = sub.add_parser("list", help="list saved runs")

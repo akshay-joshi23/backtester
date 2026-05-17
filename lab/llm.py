@@ -179,6 +179,39 @@ def generate_strategy(
     )
 
 
+def _ruff_check(code: str) -> str | None:
+    """Run ruff with pyflakes rules; return error string or None.
+
+    Only flags rules in the F category (undefined names, unused imports, etc.)
+    — not style issues. If ruff is missing, returns None silently.
+    """
+    import shutil
+    import subprocess
+
+    ruff = shutil.which("ruff")
+    if not ruff:
+        return None
+    try:
+        # F821 = undefined name (real bug). E9xx = syntax. Skip style/unused-import
+        # warnings — too noisy and not bugs.
+        result = subprocess.run(
+            [ruff, "check", "--select", "F821,E9", "--quiet",
+             "--output-format", "concise", "-"],
+            input=code, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("ruff invocation failed: %s", e)
+        return None
+    if result.returncode == 0:
+        return None
+    # Trim the output to the first 5 lines; this is what the LLM will see.
+    msg = result.stdout.strip() or result.stderr.strip()
+    lines = msg.splitlines()
+    if len(lines) > 5:
+        lines = lines[:5] + [f"... ({len(msg.splitlines()) - 5} more)"]
+    return "lint errors:\n" + "\n".join(lines)
+
+
 def _validate_generated_code(code: str) -> str | None:
     """Returns None if the code looks valid, else a short problem string."""
     # 1. Syntax check.
@@ -186,6 +219,12 @@ def _validate_generated_code(code: str) -> str | None:
         compile(code, "<generated_strategy>", "exec")
     except SyntaxError as e:
         return f"SyntaxError: {e.msg} (line {e.lineno})"
+
+    # 1b. Ruff lint (pyflakes rules only: undefined names, etc.). Best-effort —
+    # if ruff isn't installed, skip silently.
+    lint_problem = _ruff_check(code)
+    if lint_problem:
+        return lint_problem
 
     # 2. Exec + find Strategy subclass.
     try:

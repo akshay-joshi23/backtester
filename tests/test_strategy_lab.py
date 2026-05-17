@@ -403,6 +403,23 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_validate_generated_code_catches_undefined_name():
+    """Ruff should catch references to undefined symbols."""
+    from lab.llm import _validate_generated_code
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "import pandas as pd\n\n"
+        "class Demo(Strategy):\n"
+        '    name = "Demo"\n'
+        "    def rebalance(self, date, history):\n"
+        "        return undefined_helper_function(history)\n"  # undefined
+    )
+    problem = _validate_generated_code(code)
+    # Ruff catches as F821 (undefined-name); validator should refuse.
+    assert problem is not None
+
+
 def test_validate_generated_code_catches_runtime_error():
     from lab.llm import _validate_generated_code
 

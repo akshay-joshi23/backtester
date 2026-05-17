@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from lab.backtest import BacktestConfig, walk_forward_backtest
-from lab.costs import FlatBpsPerLeg
+from lab.costs import CostModel, FlatBpsPerLeg, realistic_cost_model
 from lab.data import UniverseBundle, load_universe, resample_to_frequency
 from lab.llm import GenerationResult
 from lab.metrics import annual_turnover, compute_metrics
@@ -106,6 +106,8 @@ def run_backtest(
     max_leverage: float = 1.0,
     sandbox: bool = False,
     frequency: str = "D",
+    realistic_costs: bool = False,
+    cost_model_override: CostModel | None = None,
 ) -> tuple[pd.Series, pd.DataFrame, dict, BacktestConfig, str]:
     """Execute strategy code and run the backtest. Returns the core artifacts.
 
@@ -140,10 +142,14 @@ def run_backtest(
         long_only=long_only,
         max_leverage=max_leverage,
     )
+    if cost_model_override is not None:
+        cm = cost_model_override
+    elif realistic_costs:
+        cm = realistic_cost_model(bps_per_leg=cost_bps if cost_bps > 0 else 0.0)
+    else:
+        cm = FlatBpsPerLeg(bps=cost_bps)
     with deadline_timeout(timeout_seconds):
-        result = walk_forward_backtest(
-            strategy, returns, cfg=cfg, cost_model=FlatBpsPerLeg(bps=cost_bps),
-        )
+        result = walk_forward_backtest(strategy, returns, cfg=cfg, cost_model=cm)
     metrics = compute_metrics(result.equity, frequency=frequency)
     from lab.data import ANN_FACTOR
     metrics["annual_turnover"] = annual_turnover(

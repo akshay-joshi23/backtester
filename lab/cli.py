@@ -86,6 +86,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         max_leverage=args.max_leverage,
         sandbox=args.sandbox,
         frequency=args.frequency,
+        realistic_costs=args.realistic_costs,
     )
 
     if args.refine:
@@ -430,6 +431,9 @@ def main() -> int:
                            "not a security boundary.")
     p_bt.add_argument("--frequency", default="D", choices=["D", "W", "M"],
                       help="bar frequency: D=daily, W=weekly, M=monthly")
+    p_bt.add_argument("--realistic-costs", action="store_true",
+                      help="use BidAskSpread + SquareRootImpact + BorrowCost; "
+                           "more realistic than flat bps")
     p_bt.set_defaults(func=cmd_backtest)
 
     p_ls = sub.add_parser("list", help="list saved runs")

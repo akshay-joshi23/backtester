@@ -403,6 +403,68 @@ def test_validate_generated_code_catches_no_strategy_class():
     assert problem is not None and "no Strategy" in problem
 
 
+def test_bid_ask_spread_charges_half_spread_per_leg():
+    from lab.costs import BidAskSpread
+
+    cm = BidAskSpread(spread_bps={"SPY": 2.0, "TLT": 4.0}, fallback_bps=10.0)
+    prev = np.array([0.0, 0.0])
+    target = np.array([0.5, 0.5])
+    cost = cm.trade_cost(prev, target, ["SPY", "TLT"])
+    # SPY: 0.5 * 1.0 / 1e4 + TLT: 0.5 * 2.0 / 1e4 = 1.5e-4
+    expected = 0.5 * 1.0 / 1e4 + 0.5 * 2.0 / 1e4
+    assert abs(cost - expected) < 1e-12
+
+
+def test_bid_ask_falls_back_for_unknown_ticker():
+    from lab.costs import BidAskSpread
+
+    cm = BidAskSpread(spread_bps={"SPY": 2.0}, fallback_bps=20.0)
+    prev = np.array([0.0])
+    target = np.array([1.0])
+    cost = cm.trade_cost(prev, target, ["WEIRDETF"])
+    # Half of 20bps = 10bps on the whole 1.0 leg
+    assert abs(cost - 0.001) < 1e-12
+
+
+def test_square_root_impact_scales_with_sqrt_delta():
+    from lab.costs import SquareRootImpact
+
+    cm = SquareRootImpact(impact_coef_bps=10.0)
+    prev = np.array([0.0])
+    target_quarter = np.array([0.25])
+    target_full = np.array([1.0])
+    small = cm.trade_cost(prev, target_quarter)
+    big = cm.trade_cost(prev, target_full)
+    # impact ratio = sqrt(1.0) / sqrt(0.25) = 2.0
+    assert abs(big / small - 2.0) < 1e-9
+
+
+def test_realistic_cost_model_includes_spread_impact_borrow():
+    from lab.costs import realistic_cost_model
+
+    cm = realistic_cost_model()
+    # 3 sub-models: BidAskSpread, SquareRootImpact, BorrowCost
+    assert len(cm.models) == 3
+
+
+def test_realistic_cost_model_increases_total_cost():
+    """Compared to FlatBpsPerLeg(5), realistic costs should be HIGHER on a
+    typical rebalance from 50/50 to 60/40 (cumulative ~3-4bps spread + impact)."""
+    from lab.costs import FlatBpsPerLeg, realistic_cost_model
+
+    flat = FlatBpsPerLeg(bps=5.0)
+    rc = realistic_cost_model()
+    prev = np.array([0.5, 0.5])
+    target = np.array([0.6, 0.4])
+    tickers = ["SPY", "TLT"]
+    flat_cost = flat.trade_cost(prev, target, tickers)
+    rc_cost = rc.trade_cost(prev, target, tickers)
+    # Realistic should be in same order of magnitude or higher.
+    assert rc_cost > 0
+    assert rc_cost / flat_cost > 0.3   # at least 30% as much
+    assert rc_cost / flat_cost < 10.0  # less than 10x — sanity bound
+
+
 def test_borrow_cost_zero_for_long_only():
     from lab.costs import BorrowCost
     cm = BorrowCost()

@@ -131,6 +131,96 @@ class BorrowCost(CostModel):
         return cost
 
 
+# --------------------------------------------------------------------------- #
+# C-11 v2: bid-ask spread and square-root impact slippage
+# --------------------------------------------------------------------------- #
+
+#: Approximate effective bid-ask spread in bps for major ETFs. These are
+#: round-trip-equivalent — the spread cost on one leg is half this number.
+#: Values are typical median spreads during US market hours; tighter during
+#: high-vol regimes, wider in pre/post-market.
+DEFAULT_SPREAD_BPS: dict[str, float] = {
+    "SPY": 1.0, "QQQ": 1.0, "IWM": 2.0, "DIA": 2.0,
+    "VOO": 1.0, "VTI": 1.0,
+    "TLT": 2.0, "IEF": 2.0, "SHY": 2.0,
+    "GLD": 1.5, "SLV": 3.0,
+    "HYG": 2.0, "LQD": 2.0,
+    "UUP": 4.0, "FXE": 5.0, "FXY": 5.0,
+    "EFA": 1.5, "EEM": 2.0, "VWO": 2.0,
+    "VNQ": 2.0,
+    "XLE": 1.5, "XLF": 1.5, "XLK": 1.5, "XLY": 1.5, "XLP": 1.5, "XLV": 1.5,
+    "XLI": 1.5, "XLB": 2.0, "XLU": 2.0, "XLRE": 2.0,
+}
+DEFAULT_SPREAD_FALLBACK_BPS: float = 10.0
+
+
+@dataclass(frozen=True)
+class BidAskSpread(CostModel):
+    """Half-spread per leg (paid on every trade).
+
+    Cost = sum_i |Δw_i| * (spread_bps[i] / 2) / 1e4
+
+    Half because each round-trip crosses the spread once at entry and once
+    at exit; this model charges only the entry side, so each leg
+    incurs half the round-trip cost.
+    """
+
+    spread_bps: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_SPREAD_BPS))
+    fallback_bps: float = DEFAULT_SPREAD_FALLBACK_BPS
+
+    def trade_cost(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+        tickers: list[str] | None = None,
+    ) -> float:
+        if tickers is None or len(tickers) != len(weights_prev):
+            # Fallback: assume fallback bps for every leg.
+            trade = float(np.abs(weights_target - weights_prev).sum())
+            return trade * (self.fallback_bps / 2.0) / 1e4
+        delta = np.abs(weights_target - weights_prev)
+        cost = 0.0
+        for d, t in zip(delta, tickers):
+            spread = self.spread_bps.get(t.upper(), self.fallback_bps)
+            cost += float(d) * (spread / 2.0) / 1e4
+        return cost
+
+
+@dataclass(frozen=True)
+class SquareRootImpact(CostModel):
+    """Square-root market-impact slippage.
+
+    Models the empirical observation that market impact grows as
+    sqrt(trade_size / ADV). Charged on |Δw| for each leg, scaled by the
+    impact_coefficient.
+
+    For ETF rebalances at small AUM the trade size is tiny vs ADV so
+    impact is negligible. This becomes meaningful when sizing > $1M per
+    leg for less-liquid names.
+
+    Approximation:
+        impact_bps = impact_coef * sqrt(|Δw| * portfolio_aum / adv_dollars)
+
+    SIMPLIFICATION: we don't know portfolio_aum or per-asset ADV in this
+    framework. Instead we use a simple |Δw|^0.5 scaling — calibrated so
+    impact_coef=10 produces ~5bps slippage on a 25% rebalance leg, which
+    matches institutional rules of thumb for liquid ETFs.
+    """
+
+    impact_coef_bps: float = 10.0
+
+    def trade_cost(
+        self,
+        weights_prev: np.ndarray,
+        weights_target: np.ndarray,
+        tickers: list[str] | None = None,
+    ) -> float:
+        delta = np.abs(weights_target - weights_prev)
+        # impact per leg = coef * sqrt(|Δw|) in bps.
+        cost = float((self.impact_coef_bps * np.sqrt(delta)).sum()) / 1e4
+        return cost
+
+
 @dataclass(frozen=True)
 class CompositeCostModel(CostModel):
     """Sum of multiple cost models. trade_cost and holding_cost stack additively."""
@@ -152,3 +242,28 @@ class CompositeCostModel(CostModel):
         dt_years: float = 1.0 / 252.0,
     ) -> float:
         return sum(m.holding_cost(weights, tickers, dt_years) for m in self.models)
+
+
+def realistic_cost_model(
+    *,
+    bps_per_leg: float = 0.0,
+    use_spread: bool = True,
+    use_impact: bool = True,
+    use_borrow: bool = True,
+    impact_coef_bps: float = 10.0,
+) -> CompositeCostModel:
+    """Convenience builder: chain spread + impact + borrow into a single model.
+
+    Default leaves out FlatBpsPerLeg (BidAskSpread already covers per-leg cost).
+    Pass `bps_per_leg > 0` to add a flat commission on top.
+    """
+    parts: list[CostModel] = []
+    if bps_per_leg > 0:
+        parts.append(FlatBpsPerLeg(bps=bps_per_leg))
+    if use_spread:
+        parts.append(BidAskSpread())
+    if use_impact:
+        parts.append(SquareRootImpact(impact_coef_bps=impact_coef_bps))
+    if use_borrow:
+        parts.append(BorrowCost())
+    return CompositeCostModel(models=tuple(parts))

@@ -101,6 +101,13 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 def cmd_show(args: argparse.Namespace) -> int:
     run = load_run(args.run_id)
+    if args.open:
+        from lab.report import render_run_report
+        html_path = render_run_report(run)
+        import webbrowser
+        webbrowser.open(f"file://{html_path}")
+        print(f"Opened report: {html_path}")
+        return 0
     print(f"# Run: {run['run_id']}")
     print(f"# Strategy: {run['config'].get('strategy_name', '?')}")
     print(f"# Universe: {run['config']['universe']}")
@@ -235,6 +242,8 @@ def main() -> int:
 
     p_sh = sub.add_parser("show", help="show one run's details")
     p_sh.add_argument("run_id")
+    p_sh.add_argument("--open", action="store_true",
+                      help="render HTML report and open in browser")
     p_sh.set_defaults(func=cmd_show)
 
     p_cmp = sub.add_parser("compare", help="side-by-side compare two or more runs")

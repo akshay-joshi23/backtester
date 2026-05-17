@@ -177,6 +177,28 @@ def save_run(
         (run_dir / "llm_usage.json").write_text(json.dumps(generation.usage, indent=2))
     (run_dir / "raw_response.txt").write_text(generation.raw_response)
 
+    # Auto-render the HTML report. Best-effort; don't fail the run if matplotlib
+    # blows up (e.g. headless backend issue).
+    try:
+        from lab.report import render_run_report
+        render_run_report({
+            "run_id": run_dir.name,
+            "run_dir": run_dir,
+            "config": {
+                "universe": universe,
+                "train_end": cfg.train_end,
+                "rebalance_freq": cfg.rebalance_freq,
+                "strategy_name": strategy_name,
+            },
+            "metrics": metrics_clean,
+            "equity": equity,
+            "weights": weights,
+            "prompt": prompt,
+            "strategy_code": generation.code,
+        })
+    except Exception as e:
+        logger.warning("HTML report failed: %s", e)
+
     return RunArtifacts(
         run_id=run_dir.name,
         run_dir=run_dir,

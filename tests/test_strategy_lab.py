@@ -373,6 +373,42 @@ def test_runner_rejects_multiple_strategy_subclasses():
         execute_strategy_code(code)
 
 
+def test_html_report_renders_and_is_self_contained(tmp_path):
+    """Render a report and check it's a non-empty HTML with embedded PNGs."""
+    from lab.report import render_run_report
+
+    # Build a tiny synthetic run dict.
+    idx = pd.bdate_range("2020-01-06", periods=120)
+    equity = pd.Series(np.cumprod(1.0 + np.full(120, 0.0005)), index=idx)
+    weights = pd.DataFrame({"X": 0.6, "Y": 0.4}, index=idx)
+    run_dir = tmp_path / "test_run"
+    run_dir.mkdir()
+    run_dict = {
+        "run_id": "test_run",
+        "run_dir": run_dir,
+        "config": {
+            "universe": ["X", "Y"], "train_end": "2020-01-01",
+            "rebalance_freq": 21, "strategy_name": "TestStrat",
+        },
+        "metrics": {"sharpe": 1.2, "cagr": 0.08, "max_drawdown": -0.05,
+                    "final_nav": 1.06, "n_obs": 119, "ann_vol": 0.06,
+                    "calmar": 1.6, "sortino": 1.5,
+                    "annual_turnover": 0.1, "total_transaction_cost": 0.001},
+        "equity": equity,
+        "weights": weights,
+        "prompt": "test prompt",
+        "strategy_code": "from lab.strategy import Strategy\nclass X(Strategy):\n    pass\n",
+    }
+    out = render_run_report(run_dict)
+    assert out.exists()
+    text = out.read_text()
+    assert "<title>TestStrat" in text
+    # Three base64-encoded PNGs (equity, weights, monthly).
+    assert text.count("data:image/png;base64,") >= 2
+    assert "Sharpe" in text
+    assert "1.200" in text  # sharpe value
+
+
 def test_lookahead_validator_passes_for_clean_strategy():
     rets = make_synthetic_returns(n_days=400, tickers=("X", "Y"))
     validate_no_lookahead(lambda: FixedMix({"X": 0.5, "Y": 0.5}), rets, probe_dates=3)

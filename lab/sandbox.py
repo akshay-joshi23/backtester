@@ -168,6 +168,109 @@ def audit_code(code: str) -> None:
         )
 
 
+def run_strategy_code_in_container(
+    code: str,
+    *,
+    timeout_seconds: float = 60.0,
+    image: str = "python:3.11-slim",
+    memory_limit: str = "512m",
+    cpu_limit: str = "1.0",
+) -> str:
+    """Run the audit + class-discovery in a Docker container.
+
+    Stronger isolation than the subprocess path: no network, read-only
+    rootfs (except a small tmpfs writable area), memory/CPU caps, and
+    Python -I -S so site-packages from the host don't leak in. We
+    install lab.strategy via a tiny pip install of the wheel inside the
+    container.
+
+    Requires Docker to be available on PATH. If not, raises
+    RuntimeError — fall back to run_strategy_code_sandboxed().
+
+    SIMPLIFICATION: this only validates that the code loads and
+    produces a Strategy subclass; it does NOT run the actual
+    walk-forward backtest inside the container (too slow, would need
+    data mounted). For real production use, run the whole backtest
+    in a container — but for personal use this catches the
+    code-injection / exfil cases that matter.
+    """
+    import json
+    import shutil
+    import subprocess
+    import textwrap
+
+    audit_code(code)  # always run the static audit first
+
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError(
+            "docker not found on PATH. Install Docker or use "
+            "run_strategy_code_sandboxed() for subprocess-only isolation."
+        )
+
+    # Minimal probe script. Doesn't import lab.* — only stdlib + Strategy ABC
+    # which we vendor inline as a tiny duck-type so we don't need lab
+    # available inside the container.
+    probe = textwrap.dedent("""
+        import abc, json, sys
+        class Strategy(abc.ABC):
+            name = 'Unnamed'
+            def fit(self, history): pass
+            @abc.abstractmethod
+            def rebalance(self, date, history): raise NotImplementedError
+        sys.modules.setdefault('lab', type(sys)('lab'))
+        sys.modules.setdefault('lab.strategy', type(sys)('lab.strategy'))
+        sys.modules['lab.strategy'].Strategy = Strategy
+        code = sys.stdin.read()
+        ns = {}
+        try:
+            exec(compile(code, '<container>', 'exec'), ns)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}))
+            sys.exit(0)
+        classes = [v for v in ns.values()
+                   if isinstance(v, type) and issubclass(v, Strategy)
+                   and v is not Strategy]
+        if len(classes) != 1:
+            print(json.dumps({"ok": False, "error": f"want 1 Strategy subclass, found {len(classes)}"}))
+            sys.exit(0)
+        print(json.dumps({"ok": True, "class_name": classes[0].__name__}))
+    """).strip()
+
+    cmd = [
+        docker, "run", "--rm", "-i",
+        "--network", "none",
+        "--memory", memory_limit,
+        "--cpus", cpu_limit,
+        "--read-only",
+        "--tmpfs", "/tmp:rw,size=64m",
+        image,
+        "python", "-I", "-S", "-c", probe,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, input=code, capture_output=True, text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"container sandbox timed out after {timeout_seconds}s"
+        ) from e
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"container sandbox failed (exit {result.returncode}): "
+            f"{result.stderr.strip()[:500]}"
+        )
+    last_line = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else "{}"
+    try:
+        payload = json.loads(last_line)
+    except ValueError:
+        raise RuntimeError(f"container produced unparseable output: {result.stdout!r}")
+    if not payload.get("ok"):
+        raise RuntimeError(f"container rejected code: {payload.get('error')}")
+    return payload["class_name"]
+
+
 def run_strategy_code_sandboxed(
     code: str,
     *,

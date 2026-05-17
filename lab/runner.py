@@ -104,7 +104,7 @@ def run_backtest(
     timeout_seconds: float = 120.0,
     long_only: bool = True,
     max_leverage: float = 1.0,
-    sandbox: bool = False,
+    sandbox: bool | str = False,
     frequency: str = "D",
     realistic_costs: bool = False,
     cost_model_override: CostModel | None = None,
@@ -118,9 +118,11 @@ def run_backtest(
     -------
     (equity, realized_weights, metrics, config, strategy_name)
     """
-    if sandbox:
+    if sandbox == "container":
+        from lab.sandbox import run_strategy_code_in_container
+        run_strategy_code_in_container(code)
+    elif sandbox:
         from lab.sandbox import run_strategy_code_sandboxed
-        # Pre-flight in a subprocess; if it passes, execute in-process for speed.
         run_strategy_code_sandboxed(code)
     cls = execute_strategy_code(code)
     strategy = cls()  # type: ignore[call-arg]

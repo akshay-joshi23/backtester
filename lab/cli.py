@@ -99,7 +99,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout,
         long_only=not args.long_short,
         max_leverage=args.max_leverage,
-        sandbox=args.sandbox,
+        sandbox=("container" if args.container else args.sandbox),
         frequency=args.frequency,
         realistic_costs=args.realistic_costs,
     )
@@ -129,7 +129,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
                 timeout_seconds=args.timeout,
                 long_only=not args.long_short,
                 max_leverage=args.max_leverage,
-                sandbox=args.sandbox,
+                sandbox=("container" if args.container else args.sandbox),
             )
         else:
             logger.info("Refinement pass returned the same code — no rerun")
@@ -530,6 +530,10 @@ def main() -> int:
                       help="pre-flight code in an isolated subprocess "
                            "(static audit + subprocess exec). Defense-in-depth, "
                            "not a security boundary.")
+    p_bt.add_argument("--container", action="store_true",
+                      help="pre-flight code in a Docker container (no network, "
+                           "memory/CPU caps). Stronger than --sandbox. Requires "
+                           "Docker on PATH.")
     p_bt.add_argument("--frequency", default="D", choices=["D", "W", "M"],
                       help="bar frequency: D=daily, W=weekly, M=monthly")
     p_bt.add_argument("--realistic-costs", action="store_true",

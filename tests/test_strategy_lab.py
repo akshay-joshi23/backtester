@@ -790,6 +790,34 @@ def test_resample_rejects_bad_frequency():
         resample_to_frequency(bundle, "Q")
 
 
+def test_container_sandbox_raises_when_docker_missing(monkeypatch):
+    """If Docker isn't installed, the container path should raise a clear error."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda x: None)
+    from lab.sandbox import run_strategy_code_in_container
+
+    code = (
+        "from lab.strategy import Strategy\n"
+        "class S(Strategy):\n"
+        "    def rebalance(self, date, history):\n"
+        "        return None\n"
+    )
+    with pytest.raises(RuntimeError, match="docker not found"):
+        run_strategy_code_in_container(code)
+
+
+def test_container_sandbox_still_runs_audit_first(monkeypatch):
+    """Even if Docker is available, the static audit runs FIRST and catches
+    blocklisted imports before invoking docker."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda x: "/fake/docker")
+    from lab.sandbox import AuditFailure, run_strategy_code_in_container
+
+    code = "import socket\n"
+    with pytest.raises(AuditFailure):
+        run_strategy_code_in_container(code)
+
+
 def test_sandbox_audit_blocks_socket_import():
     from lab.sandbox import AuditFailure, audit_code
 

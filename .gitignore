@@ -21,6 +21,12 @@ htmlcov/
 runs/
 !runs/.gitkeep
 
+# live trading secrets — never commit
+.env
+.env.local
+*.pem
+*.p12
+
 # regime_model caches and outputs
 regime_model/cache/
 regime_model/outputs/

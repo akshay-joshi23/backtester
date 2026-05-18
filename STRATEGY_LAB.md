@@ -78,6 +78,24 @@ class MyStrategy(Strategy):
 
 The system prompt in `lab/prompts/system.md` documents this interface plus three few-shot examples (buy-and-hold, MA-filtered EW, top-k momentum). Prompt caching keeps the system prompt cheap on every call.
 
+## Live & paper trading
+
+For executing a saved strategy against a real broker (paper-only in v1),
+see **[LIVE_TRADING.md](LIVE_TRADING.md)** for the setup walkthrough,
+operational runbook, kill-switch reference, and the explicit multi-step
+path required before enabling real-money trading.
+
+CLI quick reference:
+```bash
+lab paper-trade <run_id> --dry-run        # safe preview
+lab paper-trade <run_id> --broker alpaca  # one real paper cycle
+lab status <run_id>                       # state + positions + last events
+lab halt <run_id> --reason "..."          # stop next cycle
+lab resume <run_id>                       # un-halt
+lab reconcile <run_id>                    # diff intended vs actual
+lab history <run_id>                      # tail the trade log
+```
+
 ## What's in the box
 
 - `lab/strategy.py`     — Strategy ABC + sanity helpers

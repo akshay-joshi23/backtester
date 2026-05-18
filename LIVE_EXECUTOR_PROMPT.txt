@@ -1,0 +1,508 @@
+==============================================================================
+STRATEGY LAB — LIVE / PAPER EXECUTOR IMPLEMENTATION PROMPT
+==============================================================================
+
+You are picking up a Strategy Lab repository where a generic walk-forward
+backtester is already built and tested. Your job: implement a live/paper
+trading executor that takes a *saved backtest run* (a directory under
+runs/<id>/) and trades the strategy daily against a real broker, with
+paper trading as the default and live trading as an explicitly-flagged
+later mode.
+
+This is a multi-day implementation task. Work in feature-sized commits,
+write tests as you go, and document every assumption you make. Treat this
+as production code that will trade real money.
+
+------------------------------------------------------------------------------
+0. READ FIRST — CONTEXT YOU NEED
+------------------------------------------------------------------------------
+
+Before writing any code, read these files (they describe what exists and
+how the existing system is wired):
+
+  - STRATEGY_LAB.md            — product overview
+  - STRATEGY_LAB_V2_REPORT.md  — most recent feature summary
+  - lab/strategy.py            — Strategy ABC (what every strategy implements)
+  - lab/backtest.py            — walk_forward_backtest engine
+  - lab/runner.py              — run_backtest, save_run, load_run, RUNS_DIR
+  - lab/costs.py               — CostModel, FlatBpsPerLeg, BorrowCost, CompositeCostModel
+  - lab/cli.py                 — argparse entry points
+  - runs/<id>/                 — example saved-run artifacts
+       prompt.txt, strategy.py, config.json, equity.csv, weights.csv, metrics.json
+
+You can assume the existing tests pass. Do not modify the backtester
+itself unless absolutely necessary; if you must, justify it in the
+commit message.
+
+------------------------------------------------------------------------------
+1. SCOPE
+------------------------------------------------------------------------------
+
+You are building lab/live/, a new subpackage. It contains the broker
+adapter, the executor loop, state management, kill switches, and CLI
+glue. The existing lab/* modules should be importable but not
+modified.
+
+In scope:
+  • Paper trading against Alpaca (free, has a paper endpoint).
+  • Daily rebalance against a single saved run.
+  • Drift threshold (don't trade unless drift > X%).
+  • Position state stored on disk, reconciled to broker each run.
+  • Kill switches: max-daily-loss, max-position-size, manual halt file.
+  • Dry-run mode: prints orders, doesn't submit.
+  • CLI commands: paper-trade, halt, status, reconcile, history.
+  • A test suite with ~30-50 tests, all using a FAKE broker adapter so CI
+    doesn't need network. Optional: a couple of slow tests that hit
+    Alpaca's paper sandbox, marked @pytest.mark.live.
+
+Explicitly OUT of scope for this iteration (document, defer):
+  • Live (non-paper) trading. Add a `--live` flag that raises
+    NotImplementedError with a clear message about the safeguard process
+    that must precede enabling it.
+  • Intraday trading. End-of-day rebalance only.
+  • Multi-broker support. Define the interface, but only Alpaca is implemented.
+  • Tax-lot tracking, wash sales — defer to the broker's accounting.
+  • Smart order routing (TWAP, VWAP). Market orders for v1.
+  • Multi-strategy portfolios. One saved run = one paper account.
+
+------------------------------------------------------------------------------
+2. ARCHITECTURE — WHAT TO BUILD
+------------------------------------------------------------------------------
+
+Create lab/live/ with the following modules. Module-level docstrings
+should match the brief here.
+
+  lab/live/__init__.py
+    Re-exports: BrokerAdapter, AlpacaAdapter, FakeBroker, PaperExecutor,
+                KillSwitchTriggered, SafetyConfig, ExecutorState
+
+  lab/live/broker.py
+    Broker abstraction. Concrete adapters live in this module.
+
+    class BrokerAdapter(ABC):
+        @abstractmethod
+        def get_account(self) -> AccountSummary:
+            """Cash, equity, buying power, day_trade_count."""
+        @abstractmethod
+        def get_positions(self) -> dict[str, Position]:
+            """Ticker -> Position(shares, avg_entry_price, market_value)."""
+        @abstractmethod
+        def get_quote(self, ticker: str) -> Quote:
+            """Last price, bid, ask, timestamp."""
+        @abstractmethod
+        def submit_order(self, order: OrderRequest) -> OrderResult:
+            """Submit a market or limit order. Returns broker order id."""
+        @abstractmethod
+        def get_order(self, order_id: str) -> OrderStatus:
+            """Status: pending / filled / partial / rejected / cancelled."""
+        @abstractmethod
+        def cancel_order(self, order_id: str) -> None:
+            ...
+        @abstractmethod
+        def market_is_open(self) -> bool:
+            ...
+
+    Dataclasses:
+        AccountSummary, Position, Quote, OrderRequest, OrderResult,
+        OrderStatus, Fill
+
+    class AlpacaAdapter(BrokerAdapter):
+        Auth via env: APCA_API_KEY_ID, APCA_API_SECRET_KEY. Uses
+        Alpaca's paper endpoint by default; raise loudly if APCA_BASE_URL
+        is set to the live endpoint without an explicit live=True flag.
+
+    class FakeBroker(BrokerAdapter):
+        Deterministic in-memory broker for tests. Configurable: starting
+        cash, fill behavior (instant / delayed / partial / reject),
+        fixed-price quotes from a dict. Used everywhere in the test suite.
+
+  lab/live/state.py
+    Persistent executor state. Stored as JSON under
+    runs/<run_id>/live_state/.
+
+    @dataclass
+    class ExecutorState:
+        run_id: str
+        broker_name: str
+        is_live: bool   # default False
+        started_at: datetime
+        last_trade_at: datetime | None
+        total_orders: int
+        total_fills: int
+        cumulative_pnl: float
+        halt_reason: str | None  # set by kill switch
+        # Internal tracking
+        intended_positions: dict[str, float]  # ticker -> target shares
+        last_reconcile_at: datetime | None
+        last_reconcile_drift: dict[str, float]  # ticker -> |intended - actual|
+
+    Plus: save_state(path, state), load_state(path) -> ExecutorState,
+    append_trade_log(path, entry: dict), read_trade_log(path) -> list[dict].
+
+    Use a file lock (fcntl.flock or filelock package) when writing state
+    so concurrent invocations don't corrupt files.
+
+  lab/live/safety.py
+    Kill switches. ALL safety checks are evaluated EVERY rebalance
+    BEFORE any orders are submitted.
+
+    @dataclass(frozen=True)
+    class SafetyConfig:
+        max_daily_loss_pct: float = 0.05         # halt if NAV drops 5% intraday
+        max_total_drawdown_pct: float = 0.20     # halt if peak-to-now > 20%
+        max_position_pct: float = 0.50           # no single position > 50% NAV
+        max_order_size_pct: float = 0.25         # no single order > 25% NAV
+        max_orders_per_day: int = 20             # cap daily order count
+        require_market_open: bool = True         # only trade when market open
+        require_paper: bool = True               # halt if asked to go live without override
+
+    class KillSwitchTriggered(Exception):
+        pass
+
+    Functions:
+        check_safety(broker, state, target_orders, cfg) -> None  # raises
+        is_halted(state) -> bool
+        halt(state, reason: str) -> None
+        write_halt_file(run_dir: Path) -> Path        # creates runs/<id>/HALT
+        read_halt_file(run_dir: Path) -> str | None    # presence == halt
+
+    Halt file ergonomics: a user typing `touch runs/<id>/HALT` should
+    immediately stop the next rebalance. The executor checks for this
+    file BEFORE doing anything else each cycle.
+
+  lab/live/executor.py
+    The daily loop. This is the main module.
+
+    @dataclass
+    class ExecutorConfig:
+        run_id: str
+        broker_name: str = "alpaca"
+        rebalance_time: str = "15:30"     # ET, before close, configurable
+        drift_threshold_pct: float = 0.02 # only trade if |target - actual| > 2%
+        max_capital: float | None = None  # cap dollars allocated; None = use cash
+        dry_run: bool = False
+        live: bool = False                # must be explicitly True; not yet supported
+        safety: SafetyConfig = field(default_factory=SafetyConfig)
+
+    class PaperExecutor:
+        def __init__(self, cfg: ExecutorConfig, broker: BrokerAdapter): ...
+
+        def step(self) -> StepResult:
+            """One rebalance cycle. Idempotent — safe to re-run on the
+            same day; if positions already match targets within drift,
+            it submits nothing."""
+
+            Algorithm:
+              1. Check halt file. If present, log + return early.
+              2. Check market open (skip if require_market_open).
+              3. Load the saved strategy code from runs/<run_id>/strategy.py.
+                 exec() it in a fresh namespace, instantiate the Strategy.
+              4. Build the strategy's history input from saved equity.csv +
+                 any cached returns. Use the same data layer as the
+                 backtester (lab/data.load_universe) for the run's universe.
+              5. Call strategy.rebalance(today, history) -> target weights.
+              6. Get account NAV from broker.
+              7. Convert target weights to target dollar amounts, then to
+                 target share counts using current bid/ask midpoints.
+              8. Diff target shares vs current broker positions.
+              9. Apply drift threshold: ignore tickers where the share
+                 delta would be < drift_threshold_pct of NAV.
+             10. Run check_safety() on the candidate order list.
+             11. If dry_run: print orders, return. Else: submit each order,
+                 record fill, append to trade log.
+             12. Update ExecutorState. Save.
+
+        def run_forever(self, interval_seconds: int = 86400) -> None:
+            """Daemon mode. Calls step() once per interval. Catches all
+            exceptions, logs them, halts on the third consecutive failure."""
+
+        def reconcile(self) -> ReconcileResult:
+            """Check that our intended positions match broker positions.
+            Reports drift; updates state. Does NOT submit orders."""
+
+  lab/live/cli.py
+    Argparse subcommands. Mounted under `lab paper-trade` via
+    lab.cli.main when invoked.
+
+    Subcommands:
+      paper-trade <run_id>            # single step (default) or --daemon
+      live-trade <run_id>             # raises NotImplementedError
+      halt <run_id> [--reason ...]    # writes HALT file
+      resume <run_id>                 # removes HALT file
+      status <run_id>                 # prints state + positions + last fill
+      reconcile <run_id>              # broker vs intended; no orders
+      history <run_id>                # tail trade log
+
+  lab/live/notify.py  (optional but recommended)
+    Tiny notification layer. Implementations: stderr (default), file,
+    Slack webhook (if SLACK_WEBHOOK_URL is set), email (if SMTP_* env
+    vars are set). Used by safety.halt() and the daemon's error path.
+
+------------------------------------------------------------------------------
+3. CRITICAL DESIGN DECISIONS — WHAT TO PICK
+------------------------------------------------------------------------------
+
+You are authorized to make these calls but must document them in the
+commit message AND in the relevant module's docstring.
+
+  a) Rebalance timing.
+     Default: 15:30 ET (30 minutes before close). Use a market order,
+     time_in_force="day". Document the trade-off: closer to close gives
+     fills more aligned to the backtest's close-to-close returns, but
+     less liquidity. Allow override via ExecutorConfig.rebalance_time.
+
+  b) Share-count rounding.
+     Alpaca paper supports fractional shares. Use them by default; flag
+     allow_fractional=False to force whole-share rounding. When
+     rounding to whole shares, round toward zero (don't over-buy).
+
+  c) Cash management.
+     The strategy returns weights summing to [0, 1]; (1 - sum) is
+     implicit cash. We do NOT need to do anything with the cash
+     position — Alpaca pays daily interest on it automatically in
+     their paper environment.
+
+  d) Dividend / distribution handling.
+     Don't try to model them. The broker credits cash; the next
+     rebalance treats that cash as part of NAV. Document this in the
+     executor docstring as "dividends drift the cash sleeve, will be
+     reabsorbed at next rebalance."
+
+  e) Pricing reference for share-count conversion.
+     Use mid-quote (bid + ask) / 2 from get_quote(). Fall back to last
+     trade if quote is empty (off-hours).
+
+  f) Order types.
+     Market orders only in v1. Limit orders are a v2 feature.
+     Time-in-force = "day".
+
+  g) Failure handling.
+     Order submission errors: log, do not retry within the same step()
+     call. Next day's step() will retry naturally via reconciliation.
+     If 3 step()s fail in a row, write HALT file and notify.
+
+  h) State persistence.
+     JSON only. Don't use SQLite or similar. Each ExecutorState
+     write is atomic (write to .tmp, fsync, rename).
+
+  i) Time/timezone.
+     Use ZoneInfo("America/New_York") for all "is the market open"
+     logic. Store timestamps in UTC ISO format in state files.
+
+  j) The "live" flag.
+     `live=True` in ExecutorConfig must raise NotImplementedError with
+     this exact text:
+         "Live trading is not enabled in this build. To enable it,
+         someone must: (1) verify paper trading has run cleanly for
+         3+ months, (2) explicitly remove this guard, (3) add per-
+         trade size caps, (4) set up real-time monitoring. None of
+         that has been done."
+     This is the safety guard. Do not remove it. Do not provide a
+     CLI flag to bypass it.
+
+------------------------------------------------------------------------------
+4. TESTS — WHAT TO COVER
+------------------------------------------------------------------------------
+
+Put tests in tests/test_live_executor.py. Use FakeBroker for all
+non-marked tests so CI doesn't need network.
+
+Required test coverage:
+
+  Broker adapter contract:
+    [ ] FakeBroker satisfies the BrokerAdapter ABC.
+    [ ] AlpacaAdapter satisfies the BrokerAdapter ABC.
+    [ ] Submit + get_order + cancel_order round-trip on FakeBroker.
+    [ ] AlpacaAdapter raises on missing env vars.
+    [ ] AlpacaAdapter refuses live endpoint without explicit live=True.
+
+  State:
+    [ ] save_state / load_state round-trip preserves all fields.
+    [ ] Atomic write doesn't leave a half-written file on simulated crash.
+    [ ] Trade log append is append-only and parseable.
+
+  Safety:
+    [ ] HALT file presence halts the executor before any broker call.
+    [ ] Max-position-size guard rejects oversize orders.
+    [ ] Max-orders-per-day guard caps daily count.
+    [ ] Max-daily-loss guard triggers when NAV drops below threshold.
+    [ ] check_safety raises KillSwitchTriggered (not return False) on violation.
+    [ ] require_market_open=True + closed market → skip step gracefully.
+    [ ] require_paper=True + live=True → guard raises immediately.
+
+  Executor logic:
+    [ ] Empty starting positions → first step buys to targets.
+    [ ] Positions already at targets → step submits zero orders.
+    [ ] Drift below threshold → no orders.
+    [ ] Drift above threshold → exactly the right shares submitted.
+    [ ] Strategy returning all-zero weights → liquidate all positions.
+    [ ] Dry-run mode: orders printed but not submitted.
+    [ ] Step is idempotent on the same day (positions don't drift further).
+    [ ] reconcile() reports correct drift without trading.
+
+  Failure modes:
+    [ ] Broker submit_order raises → step logs and does NOT crash.
+    [ ] Three consecutive step() failures → HALT file written + state.halt_reason set.
+    [ ] Strategy code raises during rebalance() → step logs, no orders submitted.
+    [ ] Network timeout simulated on FakeBroker → step logs + retries on next step.
+
+  Backtest-live parity (most important verification):
+    [ ] Given a saved run with known equity curve, running the executor
+        once-per-day with a FakeBroker that fills at the backtest's
+        close prices produces a NAV trajectory that matches the saved
+        equity.csv within 1% over 100 trading days.
+        (This is the "is my live system actually doing what my backtest
+        said it would" test. Fail it and the executor is wrong.)
+
+  CLI smoke:
+    [ ] `lab paper-trade <run_id> --dry-run` runs without errors.
+    [ ] `lab halt <run_id>` creates HALT file.
+    [ ] `lab resume <run_id>` removes HALT file.
+    [ ] `lab status <run_id>` prints expected sections.
+
+  Optional, marked @pytest.mark.live (skipped by default):
+    [ ] One round-trip against Alpaca's actual paper endpoint, behind
+        an env var like RUN_LIVE_TESTS=1.
+
+------------------------------------------------------------------------------
+5. WHAT NOT TO DO
+------------------------------------------------------------------------------
+
+  • Do not enable live (real-money) trading in this iteration. The
+    `live=True` flag must raise NotImplementedError with the message in
+    §3(j). No "secret bypass." No CLI flag. The guard is the feature.
+
+  • Do not modify the backtester (lab/backtest.py, lab/strategy.py) to
+    accommodate the executor. The executor adapts to the existing
+    Strategy interface, not vice versa.
+
+  • Do not store API keys in code or commit them. Only env vars.
+    Document this in README. Add APCA_*, SLACK_WEBHOOK_URL, SMTP_* to
+    .gitignore patterns if config files end up in the repo.
+
+  • Do not skip kill switches in tests by default. Defaults must be
+    ON. Tests can override per-test, but the default state of
+    SafetyConfig is paranoid.
+
+  • Do not write a "best-effort" reconciler that silently fixes drift.
+    If broker positions don't match intended positions, log loudly,
+    surface in status, but only correct on the next normal rebalance.
+    Mysterious drift = something is wrong that needs human eyes.
+
+  • Do not retry failed orders within the same step() — wait for next
+    day's normal rebalance. Retries-within-step is a recipe for
+    runaway behavior under broker outages.
+
+  • Do not assume the backtest's universe matches the live broker's
+    available symbols. Check on first run; if any symbol is unavailable
+    at Alpaca, refuse to start and report which.
+
+  • Do not add a "halt-on-drawdown but only sometimes" knob. Drawdown
+    kill switch either fires unconditionally or doesn't exist.
+
+  • Do not invent new run-id formats. Reuse the existing
+    runs/<timestamp>/ directory layout; live state goes inside under
+    runs/<id>/live_state/.
+
+  • Do not silently overwrite an existing live state when starting.
+    Refuse to start if state already exists for run_id; require an
+    explicit --reset flag.
+
+------------------------------------------------------------------------------
+6. DEPENDENCIES
+------------------------------------------------------------------------------
+
+Add to pyproject.toml dependencies:
+    alpaca-py>=0.30
+    filelock>=3.13     # for atomic state writes
+    zoneinfo (stdlib in 3.11+)
+
+If alpaca-py isn't installed, lab.live.broker.AlpacaAdapter should raise
+a clean ImportError on construction (not at import time), so the rest of
+the lab tools work without it.
+
+------------------------------------------------------------------------------
+7. DOCUMENTATION TO WRITE
+------------------------------------------------------------------------------
+
+  LIVE_TRADING.md at repo root:
+    Section 1: What this is. Paper-only in v1.
+    Section 2: Setup — Alpaca account, env vars.
+    Section 3: First-time setup walkthrough.
+    Section 4: Operational runbook — what to do on errors, halts.
+    Section 5: Kill-switch reference. Exhaustive.
+    Section 6: How backtest-live parity is verified.
+    Section 7: Path to enabling real-money trading (multi-step, NOT
+               a single flag flip).
+    Section 8: FAQ.
+
+  Update STRATEGY_LAB.md to mention the live module exists, link to
+  LIVE_TRADING.md.
+
+  Module docstrings everywhere following the existing style in lab/.
+
+------------------------------------------------------------------------------
+8. COMMIT STRATEGY
+------------------------------------------------------------------------------
+
+One feature per commit. Suggested ordering:
+
+  1. lab/live/broker.py    — BrokerAdapter ABC + dataclasses + FakeBroker
+  2. lab/live/state.py     — ExecutorState + persistence + trade log
+  3. lab/live/safety.py    — SafetyConfig + kill switches + halt file
+  4. lab/live/executor.py  — PaperExecutor + step() + reconcile()
+  5. lab/live/broker.py    — AlpacaAdapter (real)
+  6. lab/live/notify.py    — notification adapter
+  7. lab/live/cli.py + lab/cli.py wiring
+  8. LIVE_TRADING.md       — documentation
+  9. Backtest-live parity test (the most important one)
+ 10. Final pass: pyproject deps, README links, .gitignore patterns
+
+Each commit message follows the existing style — what changed, why,
+and any decisions/simplifications documented.
+
+------------------------------------------------------------------------------
+9. END-OF-IMPLEMENTATION CHECKLIST
+------------------------------------------------------------------------------
+
+Before declaring the task done, verify:
+
+  [ ] All listed tests pass (`pytest tests/test_live_executor.py -q`).
+  [ ] Existing tests still pass (`pytest tests/ regime_model/tests -q`).
+  [ ] `lab paper-trade --help` lists all subcommands cleanly.
+  [ ] `lab paper-trade <ref_run_id> --dry-run` runs successfully against
+      a reference strategy run (e.g., a 60_40 saved run) using
+      FakeBroker via an environment variable like LAB_USE_FAKE_BROKER=1.
+  [ ] LIVE_TRADING.md is written end-to-end and accurate.
+  [ ] No API keys, secrets, or .env files are committed.
+  [ ] The `live=True` guard raises NotImplementedError as specified.
+  [ ] Pushed to strategy-lab branch (or whatever branch is current).
+  [ ] Write LIVE_EXECUTOR_REPORT.md summarizing what shipped,
+      decisions made, and what verification is needed before flipping
+      to real money.
+
+------------------------------------------------------------------------------
+10. PERSONAL NOTE TO THE EXECUTING SESSION
+------------------------------------------------------------------------------
+
+The hard part is not the code — it's the verification that the live
+system behaves exactly like the backtest claims. The backtest-live
+parity test in §4 is the load-bearing check. If you cannot get NAV
+trajectories to match within 1% over 100 days using FakeBroker fills
+at backtest close prices, something is wrong in the executor and it
+should NOT ship. Halt and report.
+
+Default to caution at every choice point. The user's instruction
+covering this prompt was explicitly:
+
+  "I don't want to start yet. I just want to be able to trade with it
+  live after I find a strategy with a really high Sharpe ratio."
+
+That means: build the infrastructure, but the user-facing default
+must remain paper-only. Don't make it easy to accidentally flip a
+switch and lose money. The user will explicitly remove the live
+guard when they're ready.
+
+==============================================================================
+END OF PROMPT
+==============================================================================

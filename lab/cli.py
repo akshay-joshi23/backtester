@@ -635,6 +635,10 @@ def main() -> int:
                       help="(walk-forward only) in-sample tuning objective")
     p_sw.set_defaults(func=cmd_sweep)
 
+    # Live/paper executor subcommands.
+    from lab.live.cli import add_live_subcommands
+    add_live_subcommands(sub)
+
     args = p.parse_args()
     return args.func(args)
 

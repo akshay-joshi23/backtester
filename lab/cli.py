@@ -67,6 +67,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             (full_prompt + ("\n\n" + universe_brief if universe_brief else "")),
             model=args.model, max_tokens=args.max_tokens,
             temperature=args.temperature,
+            provider=args.provider,
         )
     else:
         logger.info("Generating strategy code...")
@@ -76,6 +77,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             universe_brief=universe_brief,
+            provider=args.provider,
         )
     print("--- generated strategy ---")
     print(generation.code)
@@ -111,6 +113,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             generation.code, metrics, full_prompt,
             model=args.model, max_tokens=args.max_tokens,
             temperature=args.temperature,
+            provider=args.provider,
         )
         if refined.code.strip() != generation.code.strip():
             logger.info("Refinement changed the code — re-running backtest")
@@ -516,7 +519,13 @@ def main() -> int:
                       help="gross leverage cap (sum |w| ≤ N). Default 1.0.")
     p_bt.add_argument("--timeout", type=float, default=120.0,
                       help="seconds; aborts runaway backtests. 0 to disable.")
-    p_bt.add_argument("--model", default="claude-opus-4-7")
+    p_bt.add_argument("--provider", default=None,
+                      choices=["anthropic", "openai"],
+                      help="LLM backend. Default: anthropic if ANTHROPIC_API_KEY "
+                           "is set, else openai. Override via LAB_LLM_PROVIDER.")
+    p_bt.add_argument("--model", default=None,
+                      help="model id; default depends on provider "
+                           "(claude-opus-4-7 for anthropic, gpt-4o for openai)")
     p_bt.add_argument("--temperature", type=float, default=0.2)
     p_bt.add_argument("--max-tokens", type=int, default=4096)
     p_bt.add_argument("--refine", action="store_true",
@@ -593,7 +602,10 @@ def main() -> int:
     p_fk.add_argument("--end", default=None)
     p_fk.add_argument("--cost-bps", type=float, default=5.0)
     p_fk.add_argument("--timeout", type=float, default=120.0)
-    p_fk.add_argument("--model", default="claude-opus-4-7")
+    p_fk.add_argument("--provider", default=None,
+                      choices=["anthropic", "openai"])
+    p_fk.add_argument("--model", default=None,
+                      help="model id; provider-specific default")
     p_fk.add_argument("--temperature", type=float, default=0.2)
     p_fk.add_argument("--max-tokens", type=int, default=4096)
     p_fk.set_defaults(func=cmd_fork)

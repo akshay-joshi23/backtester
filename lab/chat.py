@@ -52,6 +52,7 @@ HELP = """\
   [yellow]:compare[/yellow]            side-by-side metrics for all runs in this session
   [yellow]:reset[/yellow]              forget the parent chain (next turn starts fresh)
   [yellow]:universe[/yellow] T1 T2 …   set the asset universe (locks for the session)
+  [yellow]:provider[/yellow] anthropic|openai|auto   switch LLM backend
   [yellow]:save[/yellow] <name>        save this session to disk
   [yellow]:load[/yellow] <name>        load a saved session by name
 Anything else is treated as a strategy prompt.
@@ -59,7 +60,7 @@ Anything else is treated as a strategy prompt.
 PLAIN_HELP = (
     "Commands:\n"
     "  :help / :exit / :runs / :show <n> / :compare / :reset\n"
-    "  :universe T1 T2 ... / :save <name> / :load <name>\n"
+    "  :universe T1 T2 ... / :provider <name> / :save <name> / :load <name>\n"
     "Anything else is a strategy prompt.\n"
 )
 
@@ -75,9 +76,10 @@ class SessionState:
     end: str | None = None
     cost_bps: float = 5.0
     timeout_seconds: float = 120.0
-    model: str = "claude-opus-4-7"
+    model: str | None = None
     temperature: float = 0.2
     max_tokens: int = 4096
+    provider: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -158,7 +160,7 @@ def _do_turn(state: SessionState, user_prompt: str, console=None) -> None:
 
     generation = generate_strategy(
         full_prompt, model=state.model, max_tokens=state.max_tokens,
-        temperature=state.temperature,
+        temperature=state.temperature, provider=state.provider,
     )
 
     if console and HAS_RICH:
@@ -303,6 +305,23 @@ def _do_command(state: SessionState, line: str, console=None) -> bool:
         state.universe = [t.upper() for t in rest]
         (console.print if console else print)(
             f"universe locked to {state.universe}"
+        )
+        return True
+
+    if cmd == "provider":
+        if not rest:
+            current = state.provider or "(auto-detect)"
+            (console.print if console else print)(f"current provider: {current}")
+            return True
+        choice = rest[0].lower()
+        if choice not in ("anthropic", "openai", "auto"):
+            (console.print if console else print)(
+                f"unknown provider: {choice}. expected: anthropic | openai | auto"
+            )
+            return True
+        state.provider = None if choice == "auto" else choice
+        (console.print if console else print)(
+            f"provider set to {state.provider or 'auto-detect'}"
         )
         return True
 

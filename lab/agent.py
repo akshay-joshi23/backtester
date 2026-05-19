@@ -43,14 +43,14 @@ import numpy as np
 import pandas as pd
 
 from lab.llm import (
-    GenerationResult, _call_anthropic, _extract_python_block, _extract_usage,
-    _make_client, _parse_defaults, load_system_prompt,
+    GenerationResult, LLMMessage, LLMToolSpec, _extract_python_block,
+    _parse_defaults, get_provider, load_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
 
 
-TOOL_SCHEMAS: list[dict] = [
+_TOOL_DICTS: list[dict] = [
     {
         "name": "run_dry_backtest",
         "description": (
@@ -122,6 +122,18 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
 ]
+
+
+# Provider-agnostic tool specs. Concrete providers translate these to the
+# per-SDK schema (Anthropic input_schema vs OpenAI function.parameters).
+TOOL_SPECS: list[LLMToolSpec] = [
+    LLMToolSpec(name=d["name"], description=d["description"],
+                 input_schema=d["input_schema"])
+    for d in _TOOL_DICTS
+]
+
+# Kept for backward-compat with anything that imported TOOL_SCHEMAS.
+TOOL_SCHEMAS = _TOOL_DICTS
 
 
 # --------------------------------------------------------------------------- #
@@ -245,51 +257,50 @@ calls exploring unrelated paths.
 def run_agent(
     prompt: str,
     *,
-    model: str = "claude-opus-4-7",
+    model: str | None = None,
     max_tokens: int = 4096,
     temperature: float = 0.2,
     api_key: str | None = None,
     max_iterations: int = 5,
+    provider: str | None = None,
 ) -> GenerationResult:
     """Run the tool-using agent until it emits FINAL or exhausts iterations.
 
-    Returns the same GenerationResult shape as `generate_strategy`. The
-    `attempts` field is the number of agent rounds taken; `retry_reasons`
-    records what the agent did each round.
+    Provider-agnostic — works with both Anthropic and OpenAI backends. Tool
+    schemas, response parsing, and tool-result message construction are
+    all routed through the provider's interface methods.
+
+    `model=None` picks the provider's default (claude-opus-4-7 for Anthropic,
+    gpt-4o for OpenAI).
     """
-    client = _make_client(api_key)
+    p = get_provider(provider, api_key=api_key)
     system = load_system_prompt() + AGENT_SYSTEM_SUFFIX
 
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    messages: list[LLMMessage] = [LLMMessage(role="user", content=prompt)]
     log: list[str] = []
-    usage_total = {"input_tokens": 0, "output_tokens": 0,
-                   "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    usage_total: dict = {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        "cache_read_tokens": 0,
+    }
 
     for it in range(1, max_iterations + 1):
-        logger.info("agent iteration %d/%d", it, max_iterations)
-        response = client.messages.create(
-            model=model, max_tokens=max_tokens, temperature=temperature,
-            system=[{"type": "text", "text": system,
-                     "cache_control": {"type": "ephemeral"}}],
-            messages=messages, tools=TOOL_SCHEMAS,
+        logger.info("agent iteration %d/%d (provider=%s)", it, max_iterations, p.name)
+        response = p.generate(
+            system=system,
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=TOOL_SPECS,
         )
-        u = _extract_usage(response)
-        if u:
-            for k, v in u.items():
-                usage_total[k] = usage_total.get(k, 0) + v
+        for k, v in response.usage.items():
+            usage_total[k] = usage_total.get(k, 0) + (v or 0)
 
-        # Walk the response content blocks looking for tool_use and text.
-        tool_calls: list[Any] = []
-        text_parts: list[str] = []
-        for block in response.content:
-            btype = getattr(block, "type", "")
-            if btype == "tool_use":
-                tool_calls.append(block)
-            elif btype == "text":
-                text_parts.append(block.text)
-        raw_text = "".join(text_parts)
+        raw_text = response.text
+        tool_calls = response.tool_calls
 
-        # Check for FINAL sentinel in the assistant's text.
+        # Check for FINAL sentinel.
         if "# FINAL" in raw_text or "#FINAL" in raw_text:
             code = _extract_python_block(raw_text)
             universe, train_end, rebalance_freq = _parse_defaults(code)
@@ -298,14 +309,16 @@ def run_agent(
                 code=code, raw_response=raw_text, universe=universe,
                 train_end=train_end, rebalance_freq=rebalance_freq,
                 usage=usage_total, attempts=it, retry_reasons=log,
+                provider=p.name,
             )
 
-        # Append assistant message and process tool calls.
-        messages.append({"role": "assistant", "content": response.content})
+        # Echo the assistant turn back into the conversation in the right
+        # per-provider shape (Anthropic content-blocks vs OpenAI tool_calls).
+        assistant_msg = p.format_assistant_with_tool_calls(raw_text, tool_calls)
+        messages.append(LLMMessage(role="assistant", content=assistant_msg))
+
         if not tool_calls:
-            # No tool call and no FINAL — model returned plain text. Treat as
-            # final attempt and try to extract a code block; if there isn't
-            # one, raise.
+            # No tool call and no FINAL — accept bare code as fallback, else nudge.
             code = _extract_python_block(raw_text)
             if "class " in code and "Strategy" in code:
                 log.append(f"iter {it}: model emitted bare code (no FINAL marker)")
@@ -314,36 +327,35 @@ def run_agent(
                     code=code, raw_response=raw_text, universe=universe,
                     train_end=train_end, rebalance_freq=rebalance_freq,
                     usage=usage_total, attempts=it, retry_reasons=log,
+                    provider=p.name,
                 )
             log.append(f"iter {it}: model returned no tools and no code; nudging")
-            messages.append({
-                "role": "user",
-                "content": "You didn't call any tools or emit code. Please "
-                           "either call a tool to gather more info, or emit "
-                           "FINAL with the strategy code.",
-            })
+            messages.append(LLMMessage(role="user", content=(
+                "You didn't call any tools or emit code. Please either call a "
+                "tool to gather more info, or emit FINAL with the strategy code."
+            )))
             continue
 
-        # Execute each tool call and append the result.
-        tool_results: list[dict] = []
+        # Execute each tool call, append results in provider-shaped messages.
         for tc in tool_calls:
             name = tc.name
-            input_args = dict(tc.input) if hasattr(tc, "input") else {}
+            input_args = dict(tc.input) if tc.input else {}
             impl = TOOL_IMPLS.get(name)
             if impl is None:
-                output = f"error: unknown tool {name!r}"
+                output: Any = f"error: unknown tool {name!r}"
             else:
                 try:
                     output = impl(**input_args)
                 except TypeError as e:
                     output = f"error: bad tool args: {e}"
             log.append(f"iter {it}: tool {name}({input_args}) -> {str(output)[:80]}")
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tc.id,
-                "content": json.dumps(output, default=str) if not isinstance(output, str) else output,
-            })
-        messages.append({"role": "user", "content": tool_results})
+            output_str = (
+                output if isinstance(output, str)
+                else json.dumps(output, default=str)
+            )
+            result_msg = p.format_tool_result(tc.id, output_str)
+            messages.append(LLMMessage(role=result_msg.get("role", "user"),
+                                        content=result_msg))
 
     # Exhausted iterations without FINAL.
     raise RuntimeError(

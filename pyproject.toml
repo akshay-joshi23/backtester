@@ -15,6 +15,7 @@ dependencies = [
     "matplotlib>=3.8",
     "tqdm>=4.66",
     "anthropic>=0.40",
+    "openai>=1.30",
     "tabulate>=0.9",
     "prompt-toolkit>=3.0",
     "rich>=13.0",

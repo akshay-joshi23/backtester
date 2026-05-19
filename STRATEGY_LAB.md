@@ -78,6 +78,44 @@ class MyStrategy(Strategy):
 
 The system prompt in `lab/prompts/system.md` documents this interface plus three few-shot examples (buy-and-hold, MA-filtered EW, top-k momentum). Prompt caching keeps the system prompt cheap on every call.
 
+## LLM provider — Anthropic or OpenAI
+
+Strategy Lab speaks to both backends through a single provider abstraction.
+By default it picks the one you have credentials for; if both, it defaults
+to Anthropic.
+
+```bash
+# Use whichever key is set:
+export ANTHROPIC_API_KEY="sk-ant-..."     # picks anthropic
+# or
+export OPENAI_API_KEY="sk-..."            # picks openai
+# or both — picks anthropic, override per-command
+
+# Explicit per command:
+lab backtest "..." --provider openai
+lab backtest "..." --provider anthropic --model claude-sonnet-4-6
+
+# Session-wide default:
+export LAB_LLM_PROVIDER=openai
+
+# Inside `lab chat`:
+:provider openai
+:provider anthropic
+:provider auto       # back to auto-detect
+```
+
+Per-provider defaults:
+
+| Provider | Default model | Notes |
+|---|---|---|
+| anthropic | `claude-opus-4-7` | Explicit prompt caching; `--agent` tested most here |
+| openai | `gpt-4o` | Automatic prompt caching (≥1024 token prompts); cheaper input/output |
+
+Everything else (`--refine`, `--agent`, `--data-aware`, validation retries,
+chat REPL, fork) works identically across both. Tool schemas, response
+parsing, and tool-result messages are translated per-provider inside
+`lab.llm.{anthropic,openai}_provider`.
+
 ## Live & paper trading
 
 For executing a saved strategy against a real broker (paper-only in v1),

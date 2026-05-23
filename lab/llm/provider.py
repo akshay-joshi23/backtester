@@ -68,10 +68,15 @@ class LLMProvider(ABC):
         messages: list[LLMMessage],
         model: str | None = None,
         max_tokens: int = 4096,
-        temperature: float = 0.2,
+        temperature: float | None = None,
         tools: list[LLMToolSpec] | None = None,
     ) -> LLMResponse:
-        """Synchronous generation. Returns a normalized LLMResponse."""
+        """Synchronous generation. Returns a normalized LLMResponse.
+
+        `temperature=None` means use the provider's default. Some newer
+        Anthropic models reject explicit temperature, so leave it None unless
+        you have a specific reason to set it.
+        """
 
     @abstractmethod
     def format_tool_result(

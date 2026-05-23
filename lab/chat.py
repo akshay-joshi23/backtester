@@ -77,7 +77,7 @@ class SessionState:
     cost_bps: float = 5.0
     timeout_seconds: float = 120.0
     model: str | None = None
-    temperature: float = 0.2
+    temperature: float | None = None
     max_tokens: int = 4096
     provider: str | None = None
 

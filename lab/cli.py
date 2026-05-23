@@ -526,7 +526,9 @@ def main() -> int:
     p_bt.add_argument("--model", default=None,
                       help="model id; default depends on provider "
                            "(claude-opus-4-7 for anthropic, gpt-4o for openai)")
-    p_bt.add_argument("--temperature", type=float, default=0.2)
+    p_bt.add_argument("--temperature", type=float, default=None,
+                      help="model temperature; None = provider default. "
+                           "Newer Opus models reject explicit temperature.")
     p_bt.add_argument("--max-tokens", type=int, default=4096)
     p_bt.add_argument("--refine", action="store_true",
                       help="after the initial run, ask the LLM to review the "
@@ -606,7 +608,7 @@ def main() -> int:
                       choices=["anthropic", "openai"])
     p_fk.add_argument("--model", default=None,
                       help="model id; provider-specific default")
-    p_fk.add_argument("--temperature", type=float, default=0.2)
+    p_fk.add_argument("--temperature", type=float, default=None)
     p_fk.add_argument("--max-tokens", type=int, default=4096)
     p_fk.set_defaults(func=cmd_fork)
 

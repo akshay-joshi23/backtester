@@ -70,7 +70,7 @@ def generate_strategy(
     *,
     model: str | None = None,
     max_tokens: int = 4096,
-    temperature: float = 0.2,
+    temperature: float | None = None,
     api_key: str | None = None,
     validate: bool = True,
     max_retries: int = 2,
@@ -150,7 +150,7 @@ def refine_strategy(
     *,
     model: str | None = None,
     max_tokens: int = 4096,
-    temperature: float = 0.2,
+    temperature: float | None = None,
     api_key: str | None = None,
     provider: str | None = None,
 ) -> GenerationResult:

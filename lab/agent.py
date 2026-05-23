@@ -259,7 +259,7 @@ def run_agent(
     *,
     model: str | None = None,
     max_tokens: int = 4096,
-    temperature: float = 0.2,
+    temperature: float | None = None,
     api_key: str | None = None,
     max_iterations: int = 5,
     provider: str | None = None,

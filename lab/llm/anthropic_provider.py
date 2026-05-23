@@ -53,7 +53,7 @@ class AnthropicProvider(LLMProvider):
         messages: list[LLMMessage],
         model: str | None = None,
         max_tokens: int = 4096,
-        temperature: float = 0.2,
+        temperature: float | None = None,
         tools: list[LLMToolSpec] | None = None,
     ) -> LLMResponse:
         model = model or self.default_model
@@ -61,7 +61,6 @@ class AnthropicProvider(LLMProvider):
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "system": [{
                 "type": "text",
                 "text": system,
@@ -69,6 +68,10 @@ class AnthropicProvider(LLMProvider):
             }],
             "messages": api_messages,
         }
+        # Newer Anthropic models (Opus 4.7+) deprecate `temperature` — only
+        # include it when the caller explicitly set a value.
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = [self._translate_tool(t) for t in tools]
 

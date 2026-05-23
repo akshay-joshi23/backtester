@@ -20,6 +20,9 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "rich>=13.0",
     "filelock>=3.13",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]

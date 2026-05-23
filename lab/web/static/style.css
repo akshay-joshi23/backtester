@@ -1,0 +1,102 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "SF Pro Display", sans-serif;
+  margin: 0;
+  background: #0e1015;
+  color: #d8dee9;
+  line-height: 1.5;
+}
+header {
+  padding: 18px 28px;
+  border-bottom: 1px solid #1f2530;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+header h1 { margin: 0; font-size: 22px; font-weight: 700; color: #eceff4; }
+.tagline { color: #6b7383; font-size: 13px; }
+main {
+  display: grid;
+  grid-template-columns: minmax(380px, 480px) 1fr;
+  gap: 24px;
+  padding: 24px 28px;
+}
+section { background: #161a22; border: 1px solid #1f2530; border-radius: 10px; padding: 18px 22px; }
+h2 { margin: 0 0 14px 0; font-size: 16px; color: #eceff4; font-weight: 600; }
+h3 { font-size: 13px; color: #8b94a5; margin: 18px 0 8px 0; text-transform: uppercase; letter-spacing: 0.04em; }
+label { display: block; margin-bottom: 12px; color: #9ba6b8; font-size: 13px; }
+label.checkbox { display: inline-flex; align-items: center; gap: 6px; margin-right: 8px; color: #d8dee9; }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: #0e1015;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  color: #d8dee9;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: #4a5b73; }
+textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.row > label { flex: 1; min-width: 100px; margin-bottom: 0; }
+button {
+  padding: 8px 14px;
+  border: 1px solid #2a3140;
+  background: #1f2530;
+  color: #d8dee9;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+button:hover { background: #2a3140; }
+button.primary { background: #3b82f6; border-color: #3b82f6; color: white; font-weight: 600; }
+button.primary:hover { background: #2563eb; }
+button.primary:disabled { background: #2a3140; border-color: #2a3140; color: #6b7383; cursor: not-allowed; }
+button.danger { background: transparent; border-color: #5a3030; color: #d57878; }
+button.danger:hover { background: #2a1a1a; }
+.muted { color: #6b7383; font-size: 12px; margin: 6px 0; }
+details { margin-bottom: 14px; }
+details summary { cursor: pointer; font-weight: 600; color: #d8dee9; padding: 4px 0; }
+.meta { font-weight: normal; color: #6b7383; font-size: 12px; margin-left: 8px; }
+#status-box {
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.status-pending { background: #1f2530; color: #8b94a5; }
+.status-running { background: #1e3a5f; color: #93c5fd; }
+.status-done { background: #1a3a26; color: #86efac; }
+.status-error { background: #3a1e1e; color: #f87171; }
+#result-box, #runs-list { font-size: 13px; }
+.run-card {
+  background: #0e1015;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.run-card .name { font-weight: 600; color: #eceff4; }
+.run-card .id { font-family: ui-monospace, monospace; color: #6b7383; font-size: 11px; }
+.run-card .metrics { color: #9ba6b8; font-size: 12px; margin-top: 2px; }
+.run-card .actions a {
+  color: #3b82f6; text-decoration: none; margin-left: 10px; font-size: 12px;
+}
+.run-card .actions a:hover { text-decoration: underline; }
+table.metric-table { border-collapse: collapse; width: 100%; margin: 8px 0 14px 0; }
+table.metric-table td { padding: 5px 8px; border-bottom: 1px solid #1f2530; }
+table.metric-table td:first-child { color: #8b94a5; font-size: 12px; }
+table.metric-table td:last-child { text-align: right; font-family: ui-monospace, monospace; }
+pre.log { background: #0e1015; padding: 10px; border-radius: 6px; font-size: 11px; color: #8b94a5; max-height: 200px; overflow: auto; white-space: pre-wrap; }
+pre.code { background: #0e1015; padding: 12px; border-radius: 6px; font-size: 12px; color: #d8dee9; overflow-x: auto; max-height: 300px; }
+footer { padding: 14px 28px; color: #6b7383; font-size: 11px; }
+footer a { color: #8b94a5; text-decoration: none; margin-right: 6px; }
+footer a:hover { text-decoration: underline; color: #d8dee9; }
+.pos-good { color: #86efac; }
+.neg-bad { color: #f87171; }

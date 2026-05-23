@@ -159,6 +159,12 @@ def _cmd_chat(args: argparse.Namespace) -> int:
     return run_chat()
 
 
+def _cmd_web(args: argparse.Namespace) -> int:
+    from lab.web.server import serve
+    serve(host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def cmd_sweep(args: argparse.Namespace) -> int:
     """Sweep one hyperparameter across a list of values for a saved run's code."""
     from lab.sweep import parse_value_list, sweep_hyperparameter, walk_forward_sweep
@@ -580,6 +586,14 @@ def main() -> int:
 
     p_chat = sub.add_parser("chat", help="interactive REPL: each turn generates+runs a strategy")
     p_chat.set_defaults(func=lambda args: _cmd_chat(args))
+
+    p_web = sub.add_parser("web", help="launch local web UI (browser-based; binds to 127.0.0.1)")
+    p_web.add_argument("--host", default="127.0.0.1",
+                       help="bind address. 0.0.0.0 exposes to network — don't unless you know why.")
+    p_web.add_argument("--port", type=int, default=8765)
+    p_web.add_argument("--no-browser", action="store_true",
+                       help="don't auto-open the browser")
+    p_web.set_defaults(func=lambda args: _cmd_web(args))
 
     p_spa = sub.add_parser("spa", help="Hansen SPA test: benchmark vs alternatives")
     p_spa.add_argument("benchmark", help="run_id of the benchmark strategy")

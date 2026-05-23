@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Strategy Lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Strategy Lab</h1>
+  <span class="tagline">Natural-language → walk-forward backtest</span>
+</header>
+
+<main>
+  <!-- LEFT COLUMN — form -->
+  <section id="form-panel">
+    <h2>New backtest</h2>
+
+    <details id="keys-section" open>
+      <summary>API keys <span class="meta" id="keys-status"></span></summary>
+      <p class="muted">
+        Stored in your browser (localStorage) — never sent anywhere except
+        the local lab server running on this machine.
+      </p>
+      <label>Anthropic API key
+        <input type="password" id="anthropic-key" autocomplete="off"
+               placeholder="sk-ant-...">
+      </label>
+      <label>OpenAI API key
+        <input type="password" id="openai-key" autocomplete="off"
+               placeholder="sk-...">
+      </label>
+      <button type="button" id="save-keys">Save keys</button>
+      <button type="button" id="clear-keys" class="danger">Clear keys</button>
+    </details>
+
+    <label>Strategy prompt
+      <textarea id="prompt" rows="5"
+                placeholder="Hold 60% SPY and 40% TLT, rebalance monthly."></textarea>
+    </label>
+
+    <label>Universe (space-separated tickers)
+      <input type="text" id="universe" value="SPY TLT GLD"
+             placeholder="SPY TLT GLD QQQ">
+    </label>
+
+    <div class="row">
+      <label>Provider
+        <select id="provider">
+          <option value="">auto-detect</option>
+          <option value="anthropic">anthropic</option>
+          <option value="openai">openai</option>
+        </select>
+      </label>
+      <label>Frequency
+        <select id="frequency">
+          <option value="D">daily</option>
+          <option value="W">weekly</option>
+          <option value="M">monthly</option>
+        </select>
+      </label>
+      <label>Rebalance every (days)
+        <input type="number" id="rebalance-freq" placeholder="auto" min="1" max="252">
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="checkbox">
+        <input type="checkbox" id="refine"> --refine
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="agent"> --agent
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="data-aware"> --data-aware
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="realistic-costs"> realistic costs
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="long-short"> long/short
+      </label>
+    </div>
+
+    <button type="button" id="run-btn" class="primary">Run backtest</button>
+
+    <h3>Or run a built-in reference</h3>
+    <div class="row">
+      <select id="ref-strategy">
+        <option value="60_40">60/40 SPY-TLT</option>
+        <option value="equal_weight">equal-weight</option>
+        <option value="momentum_top2_6m">momentum (top 2, 6m lookback)</option>
+        <option value="long_short_momentum">long-short momentum</option>
+        <option value="bayesian_regime">bayesian regime model (slow)</option>
+      </select>
+      <button type="button" id="ref-btn">Run reference</button>
+    </div>
+    <p class="muted">References use no LLM calls — $0 cost.</p>
+  </section>
+
+  <!-- RIGHT COLUMN — results -->
+  <section id="results-panel">
+    <h2>Status</h2>
+    <div id="status-box" class="status-pending">Idle</div>
+
+    <h3>Latest result</h3>
+    <div id="result-box">
+      <p class="muted">Nothing yet. Submit a backtest to see results here.</p>
+    </div>
+
+    <h3>Past runs</h3>
+    <div id="runs-list"></div>
+  </section>
+</main>
+
+<footer>
+  <a href="/api/health" target="_blank">health</a> ·
+  <a href="https://github.com/akshay-joshi23/backtester/tree/strategy-lab"
+     target="_blank">source</a>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

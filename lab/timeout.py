@@ -13,7 +13,11 @@ Usage:
 from __future__ import annotations
 
 import contextlib
+import logging
 import signal
+import threading
+
+logger = logging.getLogger(__name__)
 
 
 class TimeoutError(Exception):
@@ -26,12 +30,27 @@ def timeout(seconds: float | int):
 
     `seconds <= 0` disables the timeout (acts as a no-op). On non-POSIX
     systems (Windows), this is also a no-op — signal.SIGALRM is unavailable.
+    From non-main threads (e.g., the web server's task workers) this is
+    also a no-op — signal.signal() raises ValueError outside the main
+    thread.
     """
     if seconds is None or seconds <= 0:
         yield
         return
     if not hasattr(signal, "SIGALRM"):
         # Windows: best we can do is no-op. Document upstream.
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
+        # signal.signal() only works in the main thread. The web server
+        # runs backtests in background threads — skip the timeout there
+        # rather than crash. Worth a one-time warning so it's visible in
+        # logs, but it doesn't block the work.
+        logger.warning(
+            "timeout requested in non-main thread (%s); skipping. "
+            "Set timeout_seconds=0 in the caller to silence.",
+            threading.current_thread().name,
+        )
         yield
         return
 
